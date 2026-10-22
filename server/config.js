@@ -22,15 +22,22 @@ const ROOT = path.resolve(__dirname, '..');
 
 const env = process.env;
 const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(v));
+const onVercel = !!env.VERCEL;
 
 module.exports = {
   ROOT,
   PUBLIC_DIR: path.join(ROOT, 'public'),
-  CATALOG_PATH: path.join(ROOT, 'public', 'data', 'prompts.js'),
+  CATALOG_PATH: path.join(ROOT, 'catalog', 'prompts.js'),
 
   port: Number(env.PORT) || 3000,
   host: env.HOST || '0.0.0.0',
+  onVercel,
+
+  // Database: PostgreSQL when a connection string is present, otherwise SQLite.
+  databaseUrl: env.DATABASE_URL || env.POSTGRES_URL || '',
+  dbPoolMax: Number(env.DB_POOL_MAX) || (onVercel ? 3 : 10),
   dbPath: path.resolve(ROOT, env.DB_PATH || 'storage/hub.db'),
+  sqliteJournalMode: env.SQLITE_JOURNAL_MODE || 'WAL',
 
   // Accounts
   allowedDomain: (env.ALLOWED_DOMAIN || 'qualifacts.com').toLowerCase().replace(/^@/, ''),
@@ -42,7 +49,7 @@ module.exports = {
 
   // Cookies: "auto" marks the cookie Secure when the request arrived over HTTPS.
   cookieSecure: (env.COOKIE_SECURE || 'auto').toLowerCase(),
-  trustProxy: bool(env.TRUST_PROXY, false),
+  trustProxy: bool(env.TRUST_PROXY, onVercel),
 
   // Reports group activity by day and hour in this time zone.
   reportTimezone: env.REPORT_TIMEZONE || 'America/Chicago',

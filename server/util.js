@@ -41,7 +41,7 @@ function dayParts(ts, timeZone) {
   return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24, dow };
 }
 
-/* Loads data/prompts.js (a browser script) and returns window.QPH_DATA. */
+/* Loads catalog/prompts.js (a browser script) and returns window.QPH_DATA. */
 let catalogCache = { mtime: 0, data: null };
 function loadCatalog(file) {
   const stat = fs.statSync(file);

@@ -2,16 +2,13 @@
 (function () {
   'use strict';
 
-  const D = window.QPH_DATA;
+  // The catalog is inlined in the local edition. On a server it holds internal details
+  // (repositories, tables), so it is loaded from /api/catalog.js only after sign-in.
+  let D = null;
   const view = document.getElementById('view');
   // Local edition: the one-file HTML build sets QPH_LOCAL and keeps everything in this browser.
   const LOCAL = !!window.QPH_LOCAL;
   const ASSET = Object.assign({ logo: 'assets/img/qualifacts-logo.png', mark: 'assets/img/qualifacts-mark.png' }, window.QPH_ASSETS || {});
-
-  if (!D) {
-    document.getElementById('splash').innerHTML = '<p>Prompt catalog not found. Check that data/prompts.js loads before app.js.</p>';
-    return;
-  }
 
   /* ================= Helpers ================= */
   const $ = (s, r = document) => r.querySelector(s);
@@ -83,7 +80,9 @@
       favorites: Array.isArray(d.favorites) ? d.favorites : [],
       ratings: d.ratings && typeof d.ratings === 'object' ? d.ratings : {},
       usage: d.usage && typeof d.usage === 'object' ? d.usage : {},
-      custom: Array.isArray(d.custom) ? d.custom : []
+      custom: Array.isArray(d.custom) ? d.custom : [],
+      contacts: Array.isArray(d.contacts) ? d.contacts : [],
+      prefs: d.prefs && typeof d.prefs === 'object' ? d.prefs : {}
     };
   }
   const localSave = (d) => store.set('local:data', d);
@@ -115,11 +114,35 @@
   async function localApi(method, path, body) {
     body = body || {};
     const d = localLoad();
-    const m = path.match(/^\/api\/(favorites|ratings|my-prompts)\/([a-z0-9-]+)$/);
+    const m = path.match(/^\/api\/(favorites|ratings|my-prompts|contacts)\/([a-z0-9-]+)$/);
     const id = m ? m[2] : null;
     switch (method + ' ' + (m ? `/api/${m[1]}/:id` : path)) {
       case 'GET /api/config':
-        return { allowedDomain: 'qualifacts.com', demo: false, requirePasswordChange: false, areas: D.areas || [], systems: D.platforms.map((p) => p.name), teams: D.teams || [] };
+        return { allowedDomain: 'qualifacts.com', demo: false, requirePasswordChange: false, areas: D.areas || [], systems: D.platforms.map((p) => p.name), teams: D.teams || [], promptCount: D.prompts.length, appName: D.meta.appName, version: D.meta.version, updated: D.meta.updated };
+      case 'GET /api/contacts':
+        return { team: [], mine: d.contacts.slice().sort((a, b) => a.name.localeCompare(b.name)), canEditTeam: false };
+      case 'POST /api/contacts': {
+        const name = String(body.name || '').replace(/^@+/, '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        if (name.length < 2) localFail('name', 'Enter the person’s full name.');
+        const email = String(body.email || '').trim().slice(0, 160);
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) localFail('email', 'Enter a valid email address or leave it empty.');
+        if (d.contacts.some((c) => c.name.toLowerCase() === name.toLowerCase())) localFail('exists', `${name} is already in your list.`);
+        if (d.contacts.length >= 300) localFail('limit', 'This list is full. Remove someone first.');
+        const contact = { id: Date.now() + Math.floor(Math.random() * 1000), name, email, role: String(body.role || '').trim().slice(0, 80) };
+        d.contacts.push(contact);
+        localSave(d);
+        return { contact, scope: 'mine' };
+      }
+      case 'DELETE /api/contacts/:id':
+        d.contacts = d.contacts.filter((c) => String(c.id) !== String(id));
+        localSave(d);
+        return { ok: true };
+      case 'GET /api/me/prefs/comment':
+        return { data: d.prefs.comment || {} };
+      case 'PUT /api/me/prefs/comment':
+        d.prefs.comment = body.data && typeof body.data === 'object' ? body.data : {};
+        localSave(d);
+        return { ok: true };
       case 'GET /api/me':
         return { user: Object.assign({}, LOCAL_USER), favorites: d.favorites, ratings: d.ratings, usage: d.usage, custom: d.custom, stats: localStats(d) };
       case 'GET /api/stats':
@@ -204,15 +227,45 @@
   const TICKET_KEYS = ['WORK_ITEM_URL', 'WORK_ITEM_ID', 'PLATFORM'];
   const LIST_ROUTES = ['prompts', 'mine'];
   const FALLBACK_CAT = { id: 'other', name: 'Other', color: '#5A6B8C', description: '' };
-  const catById = Object.fromEntries(D.categories.map((c) => [c.id, c]));
-  const stageById = Object.fromEntries(D.stages.map((s, i) => [s.id, Object.assign({ n: i + 1 }, s)]));
   const VAR_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
-  const SNIPPETS = D.snippets || {};
-  const COMPUTED = new Set(['PLATFORM_NOTES'].concat(Object.keys(SNIPPETS)));
   const STAR_WORDS = ['', 'Not useful', 'Slightly useful', 'Useful', 'Very useful', 'Essential'];
+  let catById = {};
+  let stageById = {};
+  let SNIPPETS = {};
+  let COMPUTED = new Set();
+  function setCatalog(data) {
+    D = data;
+    catById = Object.fromEntries(D.categories.map((c) => [c.id, c]));
+    stageById = Object.fromEntries(D.stages.map((s, i) => [s.id, Object.assign({ n: i + 1 }, s)]));
+    SNIPPETS = D.snippets || {};
+    COMPUTED = new Set(['PLATFORM_NOTES'].concat(Object.keys(SNIPPETS)));
+    const v = $('#sideVersion');
+    if (v) v.textContent = `Catalog v${D.meta.version}, updated ${fmtDate(D.meta.updated)}${LOCAL ? ' · local edition' : ''}`;
+  }
+
+  const loadedScripts = {};
+  function loadScript(src) {
+    if (!loadedScripts[src]) {
+      loadedScripts[src] = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = true;
+        s.onload = () => resolve();
+        s.onerror = () => { delete loadedScripts[src]; s.remove(); reject(new Error('Could not load ' + src.split('?')[0] + '.')); };
+        document.head.appendChild(s);
+      });
+    }
+    return loadedScripts[src];
+  }
+  async function ensureCatalog() {
+    if (D) return;
+    if (!window.QPH_DATA) await loadScript('/api/catalog.js?v=' + encodeURIComponent((state.config && state.config.version) || ''));
+    if (!window.QPH_DATA) throw new Error('The prompt catalog did not load.');
+    setCatalog(window.QPH_DATA);
+  }
 
   /* ================= State ================= */
-  const DEFAULT_SETTINGS = { guardrail: true, product: false, length: 'standard', view: 'grid', sort: 'relevance' };
+  const DEFAULT_SETTINGS = { guardrail: true, agent: '', agentCustom: '', fileOut: '', length: 'standard', view: 'grid', sort: 'relevance' };
   const state = {
     config: null,
     user: null,
@@ -269,6 +322,74 @@
     return (p && p.notes) || D.platformNotesFallback || '';
   }
 
+  /* QAgent agent and file deliverable chosen under Options */
+  const AGENT_RE = /^\/[a-z0-9][a-z0-9_-]{0,39}$/i;
+  const normalizeCmd = (v) => { let c = String(v || '').trim().split(/\s+/)[0] || ''; if (c && c[0] !== '/') c = '/' + c; return c; };
+  const agentDef = (cmd) => (D.agents || []).find((a) => a.cmd.toLowerCase() === String(cmd || '').toLowerCase()) || null;
+  function agentProblem(cmd) {
+    if (!cmd) return 'Type the agent command, for example /product.';
+    if (!AGENT_RE.test(cmd)) return 'Use the command as /switch shows it: a slash and one word.';
+    const lower = cmd.toLowerCase();
+    const builtin = (D.commands || []).find((c) => !agentDef(c.cmd) && (c.cmd === lower || (c.aliases || []).includes(lower)));
+    return builtin ? `${builtin.cmd} is a built-in command, not an agent.` : '';
+  }
+  // The agent selected in the dropdown: '' (current agent), a catalog command, or 'custom'.
+  function agentChoice() {
+    const a = state.settings.agent || '';
+    if (!a || a === 'custom' || agentDef(a)) return a;
+    return 'custom'; // a command that is no longer in the catalog
+  }
+  function agentCommand() {
+    const a = agentChoice();
+    if (!a) return '';
+    if (a !== 'custom') return agentDef(a).cmd;
+    const cmd = normalizeCmd(state.settings.agentCustom || state.settings.agent);
+    return agentProblem(cmd) ? '' : cmd;
+  }
+  function fileRequestText() {
+    const f = D.fileOutputs && D.fileOutputs[state.settings.fileOut];
+    return f ? f.text : '';
+  }
+  function agentHelpText(prefix) {
+    const a = agentChoice();
+    if (a === 'custom') {
+      const problem = agentProblem(normalizeCmd(state.settings.agentCustom || state.settings.agent));
+      return problem ? { error: true, text: problem } : { text: 'Send /switch in QAgent to see the agents you can reach and their commands.' };
+    }
+    if (!a) return { text: 'The prompt goes to the agent already active in your QAgent chat.' };
+    const def = agentDef(a);
+    return { text: `${def.desc}${def.takesWorkItem ? ' The work item link goes right after the command.' : ''}` };
+  }
+  function agentFieldHTML(prefix) {
+    const a = agentChoice();
+    const help = agentHelpText(prefix);
+    return `<div class="field agent-field" data-prefix="${prefix}"><label for="${prefix}Agent">QAgent agent</label>
+      <select id="${prefix}Agent" data-setting-select="agent">
+        <option value="" ${a === '' ? 'selected' : ''}>Current agent (no command)</option>
+        ${(D.agents || []).map((x) => `<option value="${esc(x.cmd)}" ${a === x.cmd ? 'selected' : ''}>${esc(x.name)} (${esc(x.cmd)})</option>`).join('')}
+        <option value="custom" ${a === 'custom' ? 'selected' : ''}>Another agent: type its command</option>
+      </select>
+      ${a === 'custom' ? `<input id="${prefix}AgentCmd" type="text" data-setting-text="agentCustom" value="${esc(state.settings.agentCustom || (agentDef(state.settings.agent) || state.settings.agent === 'custom' ? '' : state.settings.agent))}" placeholder="/agent-command" autocomplete="off" spellcheck="false" aria-label="Agent command" aria-describedby="${prefix}AgentHelp" ${help.error ? 'aria-invalid="true"' : ''}>` : ''}
+      <p class="help ${help.error ? 'is-error' : ''}" id="${prefix}AgentHelp" data-agent-help>${esc(help.text)}</p>
+    </div>`;
+  }
+  const FILE_CHOICES = [['', 'No file'], ['docx', 'Word'], ['xlsx', 'Excel']];
+  function fileHelpText() {
+    const v = state.settings.fileOut;
+    if (v === 'docx') return 'At the end, the prompt asks QAgent to attach its complete answer as a Word (.docx) file.';
+    if (v === 'xlsx') return 'At the end, the prompt asks QAgent to attach its complete answer as an Excel (.xlsx) file, with each table on its own sheet.';
+    return 'Ask QAgent to also attach its complete answer as a Word or Excel file.';
+  }
+  function fileFieldHTML() {
+    const v = state.settings.fileOut || '';
+    return `<div class="field"><span class="field-label" id="fileOutLabel">Also deliver the answer as a file</span>
+      <div class="segmented" role="group" aria-labelledby="fileOutLabel">
+        ${FILE_CHOICES.map(([k, l]) => `<button type="button" data-act="setting-seg" data-key="fileOut" data-val="${k}" aria-pressed="${v === k}">${k ? icon(k === 'docx' ? 'file-doc' : 'file-sheet', 'i-sm') : ''}${l}</button>`).join('')}
+      </div>
+      <p class="help" data-file-help>${esc(fileHelpText())}</p>
+    </div>`;
+  }
+
   function ticketParts(p) {
     const mode = ticketMode(p);
     const url = varValue('WORK_ITEM_URL');
@@ -296,9 +417,11 @@
     };
     const blocks = [];
     const head = [];
-    if (t.includeTicket && state.settings.product) head.push(e('/product ') + val(t.url, 'Work item URL'));
+    const cmd = agentCommand();
+    const linkOnCommand = !!(cmd && t.includeTicket && (agentDef(cmd) || {}).takesWorkItem);
+    if (cmd) head.push(linkOnCommand ? e(cmd + ' ') + val(t.url || t.id, 'Work item URL') : (html ? `<mark class="ok">${esc(cmd)}</mark>` : cmd));
     if (t.includePlatform) head.push(e('Platform: ') + val(varValue('PLATFORM'), 'Platform'));
-    if (t.includeTicket && !state.settings.product) head.push(e('Work item: ') + val(t.url || (t.id ? 'ID ' + t.id : ''), 'Work item URL'));
+    if (t.includeTicket && !linkOnCommand) head.push(e('Work item: ') + val(t.url || (t.id ? 'ID ' + t.id : ''), 'Work item URL'));
     if (head.length) blocks.push(head.join('\n'));
     if (t.includeTicket) {
       const idv = val(t.id, 'Work item ID');
@@ -331,6 +454,8 @@
     const len = D.lengths && D.lengths[state.settings.length];
     if (len && len.text) extras.push(len.text);
     if (state.settings.guardrail && D.guardrail) extras.push(D.guardrail);
+    const fileText = fileRequestText();
+    if (fileText) extras.push(fileText);
     let out = blocks.join('\n\n');
     if (extras.length) out += html ? `\n\n<span class="appended">${esc(extras.join('\n\n'))}</span>` : '\n\n' + extras.join('\n\n');
     return out;
@@ -511,6 +636,7 @@
       ['prompts', 'list', 'All prompts', allPrompts().length],
       ['favorites', 'bookmark', 'Favorites', favCount],
       ['troubleshoot', 'wrench', 'Troubleshooting'],
+      ['comment', 'message', 'Ticket comment'],
       ['playbook', 'route', 'PDLC playbook'],
       ['commands', 'terminal', 'QAgent commands'],
       ['mine', 'pen', 'My prompts', state.custom.length]
@@ -597,7 +723,8 @@
     const auth = $('#auth');
     auth.hidden = false;
     const domain = state.config ? state.config.allowedDomain : 'qualifacts.com';
-    const cfg = state.config || { areas: D.areas || [], systems: D.platforms.map((p) => p.name), teams: [] };
+    const cfg = state.config || { areas: [], systems: ['Credible', 'CareLogic', 'InSync'], teams: [] };
+    const promptCount = (D && D.prompts.length) || (state.config && state.config.promptCount) || 0;
     const tabs = (active) => `<div class="auth-tabs" role="tablist">
         <button role="tab" aria-selected="${active === 'signin'}" data-act="auth-mode" data-mode="signin">Sign in</button>
         <button role="tab" aria-selected="${active === 'register'}" data-act="auth-mode" data-mode="register">Create account</button>
@@ -664,7 +791,7 @@
         <div class="auth-copy">
           <p class="auth-product">QAgent Prompt Hub</p>
           <h2>The right QAgent prompt for every ticket</h2>
-          <p>${D.prompts.length} prompts for Credible, CareLogic and InSync: review tickets, find why an option does not appear, trace errors to the code and tell configuration from defects.</p>
+          <p>${promptCount ? promptCount + ' prompts' : 'Prompts'} for Credible, CareLogic and InSync: review tickets, find why an option does not appear, trace errors to the code and tell configuration from defects.</p>
         </div>
         <img class="auth-mark" src="${esc(ASSET.mark)}" alt="">
       </section>
@@ -761,16 +888,28 @@
     state.vars = store.get(userKey('vars'), {});
     state.settings = Object.assign({}, DEFAULT_SETTINGS, store.get(userKey('settings'), {}));
     if (LOCAL && state.settings.sort === 'popular') state.settings.sort = 'mine';
+    // Before agents were selectable there was only an on/off "/product" option.
+    if (state.settings.product === true && !state.settings.agent) state.settings.agent = '/product';
+    delete state.settings.product;
+    if (!['', 'docx', 'xlsx'].includes(state.settings.fileOut)) state.settings.fileOut = '';
     state.bannerDismissed = false;
   }
 
   function onSignedIn(me) {
     loadUserState(me);
     if (state.config && state.config.requirePasswordChange && state.user.mustChange) return showAuth('change', { forced: true });
-    showApp();
+    return showApp();
   }
 
-  function showApp() {
+  async function showApp() {
+    if (!D) {
+      try { await ensureCatalog(); } catch (e) {
+        $('#splash').hidden = false;
+        $('#auth').hidden = true;
+        $('#splash').innerHTML = `<div class="empty"><h2>The prompt catalog did not load</h2><p>${esc(e.message)} Reload the page to try again.</p><button class="btn" data-act="reload">Reload</button></div>`;
+        return;
+      }
+    }
     $('#splash').hidden = true;
     $('#auth').hidden = true;
     $('#auth').innerHTML = '';
@@ -786,6 +925,7 @@
     stopHeartbeat();
     state.user = null;
     state.favs = new Set(); state.ratings = {}; state.usage = {}; state.custom = []; state.vars = {};
+    if (window.QPHComment && window.QPHComment.reset) window.QPHComment.reset();
     closeModal();
     showAuth('signin', { message });
   }
@@ -793,7 +933,7 @@
   /* ================= Views ================= */
   function setView(html, title) {
     view.innerHTML = html;
-    document.title = (title ? title + ' | ' : '') + (D.meta.appName || 'QAgent Prompt Hub');
+    document.title = (title ? title + ' | ' : '') + ((D && D.meta.appName) || (state.config && state.config.appName) || 'QAgent Prompt Hub');
   }
 
   function viewHome() {
@@ -815,6 +955,7 @@
           <div class="ticket-actions" style="margin-top:24px">
             <a class="btn btn-lg btn-on-dark" href="#/prompts">${icon('list')}<span>Browse prompts</span></a>
             <a class="btn btn-lg btn-ghost on-dark" href="#/troubleshoot">${icon('wrench')}<span>Troubleshooting guide</span></a>
+            <a class="btn btn-lg btn-ghost on-dark" href="#/comment">${icon('message')}<span>Write a ticket comment</span></a>
           </div>
         </div>
         <div class="ticket-panel" id="heroTicket">${heroTicketHTML()}</div>
@@ -1117,7 +1258,8 @@
               </div>
             </div>
             <label class="switch"><input type="checkbox" data-setting="guardrail" ${state.settings.guardrail ? 'checked' : ''}><span><b>Add PHI guardrail</b><small>Asks QAgent not to repeat patient identifiers and to flag anything it does not know.</small></span></label>
-            ${mode !== 'none' ? `<label class="switch"><input type="checkbox" data-setting="product" ${state.settings.product ? 'checked' : ''}><span><b>Start with the /product command</b><small>Puts /product and the link on the first line instead of a plain "Work item:" line.</small></span></label>` : ''}
+            ${agentFieldHTML('opt')}
+            ${fileFieldHTML()}
             ${keys.length ? `<div><button class="btn btn-sm btn-ghost" data-act="clear-fields" data-id="${esc(p.id)}">${icon('x', 'i-sm')}<span>Clear details</span></button></div>` : ''}
           </div>
         </aside>
@@ -1222,7 +1364,7 @@
       <section class="section" aria-labelledby="platTitle">
         <div class="section-head"><h2 id="platTitle">Platform notes</h2><a href="#/about">How to update them</a></div>
         <p class="muted" style="margin:-6px 0 14px;max-width:72ch">Code-reading prompts include these notes so QAgent knows where each platform keeps configuration and permissions.</p>
-        <div class="platforms">${D.platforms.filter((p) => p.name !== 'Other').map((p) => `<div class="platform-card"><h3>${esc(p.name)}</h3>${p.notes ? `<p>${esc(p.notes)}</p>` : `<p class="muted">No notes yet. The ${esc(p.name)} team can add the repositories and the tables that hold configuration and permissions in <code>data/prompts.js</code>.</p>`}</div>`).join('')}</div>
+        <div class="platforms">${D.platforms.filter((p) => p.name !== 'Other').map((p) => `<div class="platform-card"><h3>${esc(p.name)}</h3>${p.notes ? `<p>${esc(p.notes)}</p>` : `<p class="muted">No notes yet. The ${esc(p.name)} team can add the repositories and the tables that hold configuration and permissions in <code>catalog/prompts.js</code>.</p>`}</div>`).join('')}</div>
       </section>
     `, 'Troubleshooting guide');
   }
@@ -1266,6 +1408,14 @@
           <li><span class="num">4</span><b>Answers with evidence</b><p>File paths, quoted code, read-only queries and a verdict you can paste into the ticket.</p></li>
         </ol>
       </section>
+      ${(D.agents || []).length ? `<section class="section" aria-labelledby="agentsTitle">
+        <div class="section-head"><h2 id="agentsTitle">Agents</h2></div>
+        <p class="muted">Pick one under <b>Options &gt; QAgent agent</b> on any prompt and the prompt starts with its command. Send <code>/switch</code> in QAgent to see every agent you can reach; the hub maintainers can add them to the catalog.</p>
+        <div class="cmd-list">${D.agents.map((a) => `<article class="cmd-card">
+          <div class="cmd-line"><code>${esc(a.cmd)}${a.takesWorkItem ? ' ' + esc(url || '<work item URL>') : ''}</code><button class="copy-mini" data-act="copy-cmd" data-cmd="${esc(a.cmd)}">${icon('copy')}<span>Copy</span></button></div>
+          <p><b>${esc(a.name)}.</b> ${esc(a.desc)}</p>
+        </article>`).join('')}</div>
+      </section>` : ''}
       <div class="cmd-groups section">
         ${groups.map((g) => `<section class="cmd-group"><h2>${esc(g.name)}</h2><div class="cmd-list">
           ${g.items.map((c) => `<article class="cmd-card">
@@ -1434,7 +1584,7 @@
           <h2>Prompt defaults</h2>
           <div class="settings-row"><div class="lbl"><b>Answer length</b><span>Adds a length instruction to the end of every prompt.</span></div>${seg('length', Object.keys(D.lengths).map((k) => [k, D.lengths[k].label]), state.settings.length)}</div>
           <label class="switch"><input type="checkbox" data-setting="guardrail" ${state.settings.guardrail ? 'checked' : ''}><span><b>Add PHI guardrail to every prompt</b><small>${esc(D.guardrail)}</small></span></label>
-          <label class="switch"><input type="checkbox" data-setting="product" ${state.settings.product ? 'checked' : ''}><span><b>Start prompts with the /product command</b><small>Off: the prompt starts with "Platform:" and "Work item:" lines, which QAgent reads without a command.</small></span></label>
+          <div class="settings-form">${agentFieldHTML('set')}${fileFieldHTML()}</div>
         </section>
 
         ${u.role !== 'admin' ? `<section class="panel">
@@ -1479,7 +1629,7 @@
         <ol>
           <li>Build and test the prompt in QAgent with a real work item.</li>
           <li>Save it under My prompts and select <b>Copy as catalog entry</b>.</li>
-          <li>Paste the entry into the <code>prompts</code> list in <code>public/data/prompts.js</code>.</li>
+          <li>Paste the entry into the <code>prompts</code> list in <code>catalog/prompts.js</code>.</li>
           <li>Open a pull request with a line on when the prompt helps.</li>
         </ol>
         <h2>What makes a good prompt here</h2>
@@ -1577,6 +1727,11 @@
       case 'edit': viewEditor(parts[1], params); active = 'mine'; break;
       case 'settings': viewSettings(params); break;
       case 'about': viewAbout(); break;
+      case 'comment':
+        state.current = { type: 'comment' };
+        if (window.QPHComment) window.QPHComment.render(commentCtx);
+        else viewNotFound('The comment generator did not load. Reload the page.');
+        break;
       case 'admin':
         if (!isAdmin()) { viewNotFound('Only the admin account can open the dashboards.'); break; }
         state.current = { type: 'admin' };
@@ -1648,7 +1803,7 @@
     const miss = missingVars(p);
     copyText(text).then((ok) => {
       if (!ok) { toast('Copy was blocked. Select the prompt text and copy it manually.', 'warn'); return; }
-      track('copy', p.id, { meta: { length: state.settings.length, guardrail: state.settings.guardrail, product: state.settings.product, missing: miss.length } });
+      track('copy', p.id, { meta: { length: state.settings.length, guardrail: state.settings.guardrail, agent: agentCommand(), file: state.settings.fileOut || '', missing: miss.length } });
       const u = state.usage[p.id] || { count: 0, last: 0 };
       state.usage[p.id] = { count: u.count + 1, last: Date.now() };
       flashButton(btn, 'Copied');
@@ -1786,9 +1941,10 @@
       case 'copy-prompt': e.preventDefault(); copyPrompt(id, el); break;
       case 'copy-new': copyText('/new').then((ok) => { if (ok) { flashButton(el); toast('Copied /new. Send it before the prompt.'); } }); break;
       case 'copy-cmd': {
-        const c = D.commands.find((x) => x.cmd === el.dataset.cmd);
+        const c = D.commands.find((x) => x.cmd === el.dataset.cmd) || agentDef(el.dataset.cmd) || { cmd: el.dataset.cmd };
         const url = varValue('WORK_ITEM_URL');
-        const text = c.cmd === '/product' ? (url ? '/product ' + url : '/product ') : c.cmd;
+        const takesLink = c.cmd === '/product' || (agentDef(c.cmd) || {}).takesWorkItem;
+        const text = takesLink ? (url ? c.cmd + ' ' + url : c.cmd + ' ') : c.cmd;
         copyText(text).then((ok) => { if (ok) { flashButton(el); toast(`Copied ${c.cmd}`); } });
         break;
       }
@@ -1804,7 +1960,7 @@
       }
       case 'catalog-entry': {
         const p = getPrompt(id);
-        if (p) copyText(catalogEntry(p)).then((ok) => { if (ok) { flashButton(el); toast('Copied. Paste it into the prompts list in public/data/prompts.js.'); } });
+        if (p) copyText(catalogEntry(p)).then((ok) => { if (ok) { flashButton(el); toast('Copied. Paste it into the prompts list in catalog/prompts.js.'); } });
         break;
       }
       case 'rate': saveRating(id, Number(el.dataset.stars)); break;
@@ -1842,6 +1998,8 @@
         if (el.dataset.key === 'theme') setTheme(el.dataset.val);
         else { state.settings[el.dataset.key] = el.dataset.val; saveSettings(); }
         $$(`[data-act="setting-seg"][data-key="${el.dataset.key}"]`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.val === el.dataset.val)));
+        if (el.dataset.key === 'fileOut') { $$('[data-file-help]').forEach((h) => { h.textContent = fileHelpText(); }); refreshComposer(); }
+        if (el.dataset.key === 'length') refreshComposer();
         break;
       }
       case 'view-mode': {
@@ -1883,8 +2041,9 @@
       }
       case 'export': exportData(); break;
       case 'local-reset': {
-        if (!LOCAL || !window.confirm('Clear your favorites, ratings, prompts, copy history and settings from this browser? Export them first if you want to keep them.')) return;
+        if (!LOCAL || !window.confirm('Clear your favorites, ratings, prompts, copy history, people for comments and settings from this browser? Export them first if you want to keep them.')) return;
         ['local:data', userKey('settings'), userKey('vars')].forEach((k) => store.remove(k));
+        if (window.QPHComment && window.QPHComment.reset) window.QPHComment.reset();
         api('GET', '/api/me').then((me) => { loadUserState(me); toast('Local data cleared'); route(); });
         break;
       }
@@ -1902,6 +2061,7 @@
         break;
       }
       case 'auth-continue': showApp(); break;
+      case 'reload': location.reload(); break;
       default: break;
     }
   });
@@ -1909,6 +2069,15 @@
   document.addEventListener('input', (e) => {
     const t = e.target;
     if (t.matches('[data-var]')) setVar(t.dataset.var, t.value, t);
+    else if (t.matches('[data-setting-text="agentCustom"]')) {
+      state.settings.agentCustom = t.value;
+      saveSettings();
+      const help = agentHelpText();
+      const el = t.parentElement.querySelector('[data-agent-help]');
+      if (el) { el.textContent = help.text; el.classList.toggle('is-error', !!help.error); }
+      if (help.error) t.setAttribute('aria-invalid', 'true'); else t.removeAttribute('aria-invalid');
+      refreshComposer();
+    }
     else if (t.id === 'globalSearch') onSearch(t.value);
     else if (t.id === 'edTemplate') renderEditorVars();
     else if (t.matches('.auth-form input, .auth-form select')) { t.removeAttribute('aria-invalid'); const err = $('#authError'); if (err) err.hidden = true; }
@@ -1923,6 +2092,16 @@
     const t = e.target;
     if (t.matches('select[data-var]')) setVar(t.dataset.var, t.value, t);
     else if (t.matches('[data-setting]')) { state.settings[t.dataset.setting] = t.checked; saveSettings(); refreshComposer(); }
+    else if (t.matches('[data-setting-select="agent"]')) {
+      state.settings.agent = t.value;
+      saveSettings();
+      const field = t.closest('.agent-field');
+      const prefix = field.dataset.prefix;
+      field.outerHTML = agentFieldHTML(prefix);
+      const next = $(`#${prefix}AgentCmd`) || $(`#${prefix}Agent`);
+      if (next) next.focus();
+      refreshComposer();
+    }
     else if (t.matches('[data-filter="stage"]')) navigateWithParam('stage', t.value);
     else if (t.matches('[data-filter="type"]')) navigateWithParam('type', t.value);
     else if (t.matches('[data-filter="sort"]')) { state.settings.sort = t.value; saveSettings(); renderResults(); }
@@ -1979,13 +2158,17 @@
   }
 
   /* ================= Admin bridge ================= */
-  const adminCtx = { D, api, esc, icon, plural, num, qs, toast, timeAgo, catById, stageById, setView, openModal, closeModal, download, parseHash, get state() { return state; } };
+  const adminCtx = { api, esc, icon, plural, num, qs, toast, timeAgo, setView, openModal, closeModal, download, parseHash, get D() { return D; }, get catById() { return catById; }, get stageById() { return stageById; }, get state() { return state; } };
+  const commentCtx = { LOCAL, api, esc, icon, toast, setView, openModal, closeModal, copyText, flashButton, track, loadScript, varValue, agentCommand, agentDef, agentFieldHTML, fileFieldHTML, fileRequestText, get D() { return D; }, get state() { return state; } };
 
   /* ================= Init ================= */
   async function init() {
-    if (LOCAL) migrateV1();
+    if (LOCAL) {
+      if (!window.QPH_DATA) { $('#splash').innerHTML = '<p>The prompt catalog is missing from this file. Build it again with npm run build:local.</p>'; return; }
+      setCatalog(window.QPH_DATA);
+      migrateV1();
+    }
     applyTheme();
-    $('#sideVersion').textContent = `Catalog v${D.meta.version}, updated ${fmtDate(D.meta.updated)}${LOCAL ? ' · local edition' : ''}`;
     if (LOCAL) {
       state.config = await api('GET', '/api/config');
       onSignedIn(await api('GET', '/api/me'));

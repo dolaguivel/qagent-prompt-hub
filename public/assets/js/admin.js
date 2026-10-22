@@ -16,8 +16,10 @@
     ['mtd', 'This month'], ['prev-month', 'Last month'], ['ytd', 'This year'], ['custom', 'Custom range']
   ];
   const METRICS = [
-    ['copies', 'Copies'], ['users', 'Active people'], ['minutes', 'Minutes in app'], ['views', 'Views']
+    ['copies', 'Copies'], ['users', 'Active people'], ['minutes', 'Minutes in app'], ['views', 'Views'], ['comments', 'Ticket comments']
   ];
+  const DECISION_LABELS = { defect: 'Confirmed defect', duplicate: 'Duplicate', info: 'More information needed', config: 'Configuration', design: 'Working as designed', cannot: 'Could not reproduce', unknown: 'Not recorded' };
+  const MODEL_LABELS = { 1: 'Model 1: Decision first', 2: 'Model 2: Summary table', 3: 'Model 3: SBAR', 4: 'Model 4: Questions and answers', 5: 'Model 5: Two layers' };
   const FILTER_KEYS = ['range', 'from', 'to', 'team', 'area', 'system', 'category', 'stage', 'user'];
 
   const mod = {
@@ -190,13 +192,13 @@
     const prevLabel = `previous ${n} days`;
     const anyFilterOnPrompts = params.category || params.stage;
     const tiles = [
-      { label: 'Active people', value: C.num(k.activeUsers), delta: delta(k.activeUsers, k.activeUsersPrev, prevLabel), note: `${C.num(k.registered)} accounts match these filters` },
+      { label: 'Active people', value: C.num(k.activeUsers), delta: delta(k.activeUsers, k.activeUsersPrev, prevLabel), note: `${C.num(k.registered)} accounts match these filters${k.newUsers ? `, ${C.num(k.newUsers)} new in the period` : ''}` },
       { label: 'Prompts copied', value: C.num(k.copies), delta: delta(k.copies, k.copiesPrev, prevLabel), note: `${C.num(k.views)} prompt views` },
       { label: 'Time in the hub', value: fmtMinutes(k.minutes), delta: delta(k.minutes, k.minutesPrev, prevLabel), note: anyFilterOnPrompts ? 'Not affected by category or stage filters' : `${C.num(k.visits)} visits` },
       { label: 'Time per active person', value: fmtMinutes(k.avgMinutesPerUser), note: 'Average for the period' },
       { label: 'Views that led to a copy', value: pct(k.copyRate), note: 'Copies divided by prompt views' },
       { label: 'Average rating', value: k.avgRating == null ? '–' : `${k.avgRating.toFixed(1)} / 5`, note: k.ratingsCount ? `${C.plural(k.ratingsCount, 'rating')} given in the period` : 'No ratings in the period' },
-      { label: 'New accounts', value: C.num(k.newUsers), note: 'Registered in the period' },
+      { label: 'Ticket comments', value: C.num(k.comments), delta: delta(k.comments, k.commentsPrev, prevLabel), note: anyFilterOnPrompts ? 'Not affected by category or stage filters' : 'Written with the comment generator' },
       { label: 'Prompts in use', value: C.num(d.prompts.filter((p) => !p.custom && p.copies).length), note: `of ${C.num(C.D.prompts.length)} in the catalog were copied` }
     ];
     const D = C.D;
@@ -205,6 +207,7 @@
     const catRows = d.byCategory.filter((r) => r.copies).map((r) => ({ label: (C.catById[r.key] || { name: r.key }).name, value: r.copies, filter: { key: 'category', value: r.key } }));
     const sysRows = D.platforms.map((p) => { const r = d.bySystem.find((x) => x.key === p.name) || {}; return { label: p.name, value: r.copies || 0, sub: r.registered ? `${C.plural(r.registered, 'account')} with this main system` : '', filter: { key: 'system', value: p.name } }; }).filter((r) => r.value || r.sub);
     const metricLabel = METRICS.find((m) => m[0] === mod.metric)[1];
+    const cm = d.comments || { total: 0, byDecision: [], byModel: [], byTeam: [] };
 
     body.innerHTML = `
       <div class="kpis">${tiles.map((t) => `<div class="kpi"><p class="kpi-label">${C.esc(t.label)}</p><p class="kpi-value">${C.esc(t.value)}</p>${t.delta || ''}<p class="kpi-note">${C.esc(t.note || '')}</p></div>`).join('')}</div>
@@ -215,7 +218,8 @@
           { key: 'copies', label: 'Copies', num: true },
           { key: 'users', label: 'Active people', num: true },
           { key: 'minutes', label: 'Minutes in app', num: true },
-          { key: 'views', label: 'Views', num: true }
+          { key: 'views', label: 'Views', num: true },
+          { key: 'comments', label: 'Ticket comments', num: true }
         ], d.trend, { defaultSort: { key: 'day', dir: 'desc' } })}</details>`, {
         actions: `<div class="segmented" role="group" aria-label="Metric">${METRICS.map(([v, l]) => `<button data-act="admin-metric" data-metric="${v}" aria-pressed="${mod.metric === v}">${l}</button>`).join('')}</div>`
       })}
@@ -227,9 +231,14 @@
         ${card('Copies by category', 'Select one to filter', '<div id="byCategory"></div>')}
       </div>
 
+      <div class="dash-grid">
+        ${card('Ticket comments by decision', cm.total ? `${C.plural(cm.total, 'comment')} copied for Azure DevOps in the period` : 'No ticket comments in the period', '<div id="byDecision"></div>', { actions: `<a class="btn btn-sm btn-ghost" href="${tabHref('people', params)}">By team and person</a>` })}
+        ${card('Comment structure used', 'Which of the five structures people choose', '<div id="byModel"></div>')}
+      </div>
+
       ${card('When people use the hub', 'Prompt copies by weekday and hour, in the reporting time zone', '<div id="heat"></div>')}
     `;
-    tableData.trendTable = { file: 'daily-activity', cols: [{ key: 'day', label: 'Day' }, { key: 'copies', label: 'Copies' }, { key: 'users', label: 'Active people' }, { key: 'minutes', label: 'Minutes in app' }, { key: 'views', label: 'Views' }], rows: d.trend };
+    tableData.trendTable = { file: 'daily-activity', cols: [{ key: 'day', label: 'Day' }, { key: 'copies', label: 'Copies' }, { key: 'users', label: 'Active people' }, { key: 'minutes', label: 'Minutes in app' }, { key: 'views', label: 'Views' }, { key: 'comments', label: 'Ticket comments' }], rows: d.trend };
 
     const fmt = mod.metric === 'minutes' ? fmtMinutes : (v) => C.num(v);
     window.QPHCharts.line(document.getElementById('trendChart'), d.trend.map((t) => ({ x: longDay(t.day), short: shortDay(t.day), y: t[mod.metric] || 0 })), { label: metricLabel, format: fmt, aria: `${metricLabel} per day, ${longDay(d.filters.from)} to ${longDay(d.filters.to)}` });
@@ -237,6 +246,8 @@
     window.QPHCharts.bars(document.getElementById('bySystem'), sysRows);
     window.QPHCharts.bars(document.getElementById('byStage'), stageRows);
     window.QPHCharts.bars(document.getElementById('byCategory'), catRows);
+    window.QPHCharts.bars(document.getElementById('byDecision'), cm.byDecision.map((r) => ({ label: DECISION_LABELS[r.key] || r.key, value: r.n })), { empty: 'No ticket comments with these filters.' });
+    window.QPHCharts.bars(document.getElementById('byModel'), cm.byModel.map((r) => ({ label: MODEL_LABELS[r.key] || 'Model ' + r.key, value: r.n })), { empty: 'No ticket comments with these filters.' });
     window.QPHCharts.heatmap(document.getElementById('heat'), d.heat);
   }
 
@@ -264,6 +275,9 @@
       { key: 'last', label: 'Last copied', num: true, fmt: (v) => (v ? C.timeAgo(v) : 'Not in period'), csv: (r) => (r.last ? new Date(r.last).toISOString() : '') }
     ];
     tableData.promptTable = { file: `prompts_${d.filters.from}_${d.filters.to}`, cols, rows };
+    const so = d.sendOptions || { total: 0, byAgent: [], byFile: [] };
+    const agentName = (cmd) => { if (!cmd) return 'Current agent (no command)'; const a = (C.D.agents || []).find((x) => x.cmd.toLowerCase() === cmd); return a ? `${a.name} (${a.cmd})` : cmd; };
+    const fileName = { '': 'No file', docx: 'Word (.docx)', xlsx: 'Excel (.xlsx)' };
     body.innerHTML = `
       <div class="callouts">
         <button class="callout-card" data-act="admin-prompt-filter" data-val="unused"><b>${C.num(unused.length)}</b><span>catalog prompts were not copied in this period</span></button>
@@ -276,7 +290,13 @@
           <div class="segmented" role="group" aria-label="Show">${[['all', 'All'], ['unused', 'Not copied'], ['low', 'Low rated'], ['custom', 'Custom']].map(([v, l]) => `<button data-act="admin-prompt-filter" data-val="${v}" aria-pressed="${mod.promptFilter === v}">${l}</button>`).join('')}</div>
         </div>
         ${table('promptTable', cols, rows, { defaultSort: { key: 'copies', dir: 'desc' } })}`, { actions: csvButton('promptTable') })}
+      <div class="dash-grid">
+        ${card('Copies by QAgent agent', so.total ? `The agent chosen under Options when the prompt was copied (${C.plural(so.total, 'copy', 'copies')})` : 'No copies in the period', '<div id="byAgent"></div>')}
+        ${card('Answers requested as a file', 'Copies that asked QAgent to attach its answer as Word or Excel', '<div id="byFile"></div>')}
+      </div>
     `;
+    window.QPHCharts.bars(document.getElementById('byAgent'), so.byAgent.map((r) => ({ label: agentName(r.key), value: r.n })), { empty: 'No copies with these filters.' });
+    window.QPHCharts.bars(document.getElementById('byFile'), so.byFile.map((r) => ({ label: fileName[r.key] || r.key, value: r.n })), { empty: 'No copies with these filters.' });
   }
 
   /* ---------------- Teams & people ---------------- */
@@ -287,6 +307,7 @@
       { key: 'active', label: 'Active', num: true, fmt: C.num },
       { key: 'copies', label: 'Copies', num: true, fmt: C.num },
       { key: 'views', label: 'Views', num: true, fmt: C.num },
+      { key: 'comments', label: 'Comments', num: true, fmt: C.num },
       { key: 'minutes', label: 'Time in app', num: true, fmt: fmtMinutes, csv: (r) => r.minutes },
       { key: 'avgMinutes', label: 'Per active person', num: true, fmt: fmtMinutes, csv: (r) => r.avgMinutes }
     ];
@@ -301,6 +322,7 @@
       { key: 'copies', label: 'Copies', num: true, fmt: C.num },
       { key: 'views', label: 'Views', num: true, fmt: C.num },
       { key: 'prompts', label: 'Prompts used', num: true, fmt: C.num },
+      { key: 'comments', label: 'Comments', num: true, fmt: C.num },
       { key: 'minutes', label: 'Time in app', num: true, fmt: fmtMinutes, csv: (r) => r.minutes },
       { key: 'visits', label: 'Visits', num: true, fmt: C.num },
       { key: 'favorites', label: 'Saved', num: true, fmt: C.num },

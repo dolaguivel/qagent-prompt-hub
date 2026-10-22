@@ -9,7 +9,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('./config');
-const { open, transaction } = require('./db');
+const { openSqliteSync } = require('./db');
 const U = require('./util');
 
 const DB_PATH = path.resolve(config.ROOT, process.env.DEMO_DB_PATH || 'storage/demo.db');
@@ -46,6 +46,9 @@ const SEARCHES = [
   ['clearinghouse', 1], ['customer update', 1], ['release notes', 1], ['slow page', 1], ['billing', 1], ['role', 1], ['report', 1],
   ['hl7 mapping', 0], ['eligibility check', 0], ['superbill', 0], ['treatment plan signature', 0], ['erx renewal', 0], ['telehealth', 0], ['state reporting export', 0]
 ];
+const DECISIONS = [['defect', 34], ['info', 30], ['duplicate', 18], ['config', 10], ['design', 4], ['cannot', 4]];
+const DIRECTORY = [['Morgan Ellis', 'Support case owner'], ['Priya Natarajan', 'Support case owner'], ['Diego Salinas', 'Support lead'], ['Hannah Brooks', 'Implementation'],
+  ['Victor Ramos', 'Tech lead'], ['Claire Donnelly', 'Scrum Master'], ['Omar Haddad', 'QA lead'], ['Jenna Walsh', 'Product owner']];
 const COMMENTS = {
   high: ['Saved me an hour on a missing-link ticket.', 'The configuration path at the end is exactly what Support needed.', 'QAgent found the right code-behind on the first try.', 'Great for first-pass reviews.', 'Love the read-only queries.', 'The verdict table makes it easy to answer the customer.'],
   mid: ['Useful, but the answer is long. I use the concise option.', 'Works better for Credible than for InSync for now.', 'Good start; I had to ask a follow-up for the queries.'],
@@ -54,7 +57,8 @@ const COMMENTS = {
 
 function seedDemo() {
   for (const ext of ['', '-wal', '-shm']) { try { fs.unlinkSync(DB_PATH + ext); } catch (e) { /* not there */ } }
-  const db = open(DB_PATH);
+  const db = openSqliteSync(DB_PATH, 'WAL');
+  const transaction = (fn) => { db.exec('BEGIN'); try { fn(); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; } };
   const catalog = U.loadCatalog(config.CATALOG_PATH);
   const prompts = catalog.prompts;
   const now = Date.now();
@@ -81,10 +85,11 @@ function seedDemo() {
     const insVisit = db.prepare('INSERT INTO visits (id, user_id, day, started_at, last_seen_at, active_seconds, team, area, system) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     const insFav = db.prepare('INSERT OR IGNORE INTO favorites (user_id, prompt_id, created_at) VALUES (?, ?, ?)');
     const insRating = db.prepare(`INSERT OR REPLACE INTO ratings (user_id, prompt_id, stars, comment, created_at, updated_at, updated_day) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    const insContact = db.prepare('INSERT INTO contacts (owner_id, name, email, role, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)');
 
     let users = [];
     let events = 0;
-    transaction(db, () => {
+    transaction(() => {
       insUser.run(config.adminUsername, 'Administrator', 'admin', null, null, null, adminHash, 1, now - DAYS * 86400000, daysBack(DAYS), now, now);
       const used = new Set();
       for (const team of TEAMS) {
@@ -127,6 +132,10 @@ function seedDemo() {
               events++;
             };
             if (s === 0 && rand() < 0.5) add('login', null, u.system, null);
+            if (rand() < 0.22) {
+              const decision = weighted(DECISIONS, (d) => d[1])[0];
+              add('comment', null, u.system, { decision, model: rand() < 0.75 ? 5 : pick([1, 2, 3, 4]), language: rand() < 0.88 ? 'en' : 'es', technical: rand() < 0.8, via: rand() < 0.2 ? 'qagent' : 'copy' });
+            }
             if (rand() < 0.35) { const [q, hit] = pick(SEARCHES); add('search', null, u.system, { q, results: hit ? between(1, 8) : 0 }); }
             const n = between(1, 4);
             for (let k = 0; k < n; k++) {
@@ -134,14 +143,17 @@ function seedDemo() {
               const platform = rand() < 0.9 ? u.system : pick(['Credible', 'CareLogic', 'InSync']);
               add('view', p.id, platform, null);
               if (rand() < 0.72) {
-                add('copy', p.id, platform, { length: rand() < 0.2 ? 'concise' : 'standard', guardrail: true, product: false, missing: rand() < 0.15 ? 1 : 0 });
+                add('copy', p.id, platform, { length: rand() < 0.2 ? 'concise' : 'standard', guardrail: true, agent: rand() < 0.27 ? '/product' : '', file: rand() < 0.12 ? 'docx' : rand() < 0.07 ? 'xlsx' : '', missing: rand() < 0.15 ? 1 : 0 });
                 u.copies.set(p.id, (u.copies.get(p.id) || 0) + 1);
               }
             }
-            db.prepare('UPDATE users SET last_seen_at = MAX(COALESCE(last_seen_at, 0), ?) WHERE id = ?').run(ts, u.id);
+            db.prepare('UPDATE users SET last_seen_at = MAX(COALESCE(last_seen_at, 0), ?) WHERE id = ?').run(ts, u.id); // SQLite only
           }
         }
       }
+
+      // Team directory for ticket comments (fictional names).
+      for (const [name, role] of DIRECTORY) insContact.run(null, name, null, role, 1, now - 30 * 86400000);
 
       // Favorites and ratings from what each person copied.
       for (const u of users) {

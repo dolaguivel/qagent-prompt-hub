@@ -1,6 +1,6 @@
 {
   "name": "qagent-prompt-hub",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "private": true,
   "description": "Shared library of QAgent prompts with accounts, ratings, favorites and usage dashboards.",
   "main": "server/server.js",
@@ -12,5 +12,8 @@
     "demo": "node --disable-warning=ExperimentalWarning server/demo.js",
     "seed:demo": "node --disable-warning=ExperimentalWarning server/seed-demo.js",
     "build:local": "node tools/build-local.js"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
   }
 }

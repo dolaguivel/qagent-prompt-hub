@@ -2,7 +2,9 @@
  * QAgent Prompt Hub — prompt catalog
  * ------------------------------------------------------------------
  * This is the only file you need to edit to add or improve prompts.
- * The server reloads it automatically when it changes.
+ * The server reloads it automatically when it changes, and only signed-in
+ * people can download it. Run `npm run build:local` afterwards to refresh
+ * the one-file local edition.
  *
  * How to add a prompt:
  *   1. Copy an existing object in `prompts` and give it a unique `id`
@@ -27,8 +29,8 @@
 window.QPH_DATA = {
   meta: {
     appName: 'QAgent Prompt Hub',
-    version: '2.0.0',
-    updated: '2026-10-14',
+    version: '2.2.0',
+    updated: '2026-10-21',
     maintainers: 'Sustainment team',
     // Optional: a link that opens QAgent (for example a Teams deep link). Empty hides the button.
     qagentLink: '',
@@ -45,6 +47,31 @@ window.QPH_DATA = {
     standard: { label: 'Standard', text: '' },
     concise: { label: 'Concise', text: 'Keep the answer concise: under 250 words, bullet points where possible.' },
     detailed: { label: 'Detailed', text: 'Be thorough: explain your reasoning and include every relevant detail you can find.' }
+  },
+
+  // QAgent agents a prompt can be sent to. The prompt then starts with the agent's
+  // command. Send /switch in QAgent to see the agents you can reach and their
+  // commands, and add them here. takesWorkItem: the command accepts the work item
+  // URL right after it (for example "/product https://dev.azure.com/...").
+  agents: [
+    {
+      cmd: '/product',
+      name: 'Product Agent',
+      desc: 'Research, author, and refine Decision Briefs, PRDs, and Work Item Breakdowns without a fixed state machine.',
+      takesWorkItem: true
+    }
+  ],
+
+  // Appended at the very end of the prompt when someone asks for the answer as a file.
+  fileOutputs: {
+    docx: {
+      label: 'Word',
+      text: 'Deliverable file: when you finish, also create a Word document (.docx) with your complete answer, exactly as you wrote it above, keeping the same headings, lists and tables, and attach it so I can download it. Name it with the work item ID and a short title, for example ADO-308614-root-cause.docx. Do not include patient identifiers in the file. If you cannot create files, say so and give the full answer in Markdown so I can paste it into Word.'
+    },
+    xlsx: {
+      label: 'Excel',
+      text: 'Deliverable file: when you finish, also create an Excel workbook (.xlsx) with your complete answer and attach it so I can download it. Put the full answer on a sheet named Answer, one section per row with the columns Section and Content, and put each table of your answer (causes, steps, test cases, queries, files) on its own sheet with a header row and filters. Name it with the work item ID and a short title, for example ADO-308614-root-cause.xlsx. Do not include patient identifiers in the file. If you cannot create files, say so and give each table as tab-separated text so I can paste it into Excel.'
+    }
   },
 
   // Reusable text blocks. Use them in templates as {{NAME}}.
