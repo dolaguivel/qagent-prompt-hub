@@ -29,7 +29,7 @@
 window.QPH_DATA = {
   meta: {
     appName: 'QAgent Prompt Hub',
-    version: '2.2.0',
+    version: '2.5.0',
     updated: '2026-10-21',
     maintainers: 'Sustainment team',
     // Optional: a link that opens QAgent (for example a Teams deep link). Empty hides the button.

@@ -1,6 +1,6 @@
 # QAgent Prompt Hub server image.
 # With DATABASE_URL set it uses PostgreSQL; otherwise SQLite in /app/storage (mount a volume there).
-FROM node:22-alpine
+FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./

@@ -62,22 +62,112 @@ Menu: **Ticket comment**.
 
 1. Add the analysis exported from QAgent (**PDF** or **Word .docx**). The file
    is read in the browser and is **never uploaded**.
-2. The hub detects the work item, title, partner, case, platform, verdict,
-   plain-language summary, what it is not, what to tell the partner, root
-   cause, files, proposed fix and verification. Everything stays editable.
+2. **The form fills itself as soon as the file is added.** The hub reads the
+   work item, title, partner, case and CRM, platform, the decision (from the
+   verdict, classification, assessment or result), confidence, plain-language
+   summary, what it is not, what to tell the partner, workaround, root cause,
+   solution, validation, files, proposed fix, verification, the original
+   ticket of a duplicate, the questions for the reporter, and what was tried
+   (with the domain) when it could not be reproduced.
+   - **Every ticket field is replaced** when a report is added, so nothing
+     from the previous ticket stays behind (a field the new report does not
+     have is left empty). People, CC, structure, language and options are
+     kept. **Undo** under the file brings back the previous fields.
+   - Fields filled from the report are highlighted and tagged **from the
+     report**; the tag goes away as soon as you edit the field. The panel
+     under the file lists what was filled (a dashed chip means the value is
+     kept for another decision, for example questions while the decision is
+     "Confirmed defect") and what was **not in the report**, to fill in by
+     hand.
+   - **Work item**: the ticket the report is about wins over other tickets it
+     mentions ("duplicate of #301596", "related to ADO 309999", "caused
+     by…"). A number in the file name (`ado-312530-….pdf`) and the work item
+     in the page header help decide. If the header has another work item,
+     the field says so.
+   - **Decision**: a verdict, classification or conclusion line wins over an
+     assessment, and both over "Result:"/"Status:" lines (a "Result:" inside
+     reproduction or validation steps is a step result). Negations count:
+     "not a duplicate of…", "Configuration issue — not a code defect",
+     "It looked like a configuration issue, but it is a code defect".
+   - Reports can be laid out in many ways: headings ("Root Cause",
+     "2. Root cause (technical)", "Two-Sentence Ticket Summary"), sub-headings
+     inside a section ("Solution" › "Option A", "Change 1"), labels on a line
+     ("Verdict: Code defect", "Partner: …"), tables of labels and values (Word
+     or PDF) and Markdown (`| Partner | … |`, `## Root cause`).
+   - A **Permissions**, **Data** or **Environment** verdict is a configuration
+     decision of that kind ("This is a permissions issue." / "a data issue" /
+     "an environment issue"); the kind can be changed under the decision.
+     Steps under "Verdict and Steps for Support" › "Classification: …" fill
+     the Solution, nested under their intro line as in the team's format.
+   - When a report does not state a decision, step 4 says so and the preview
+     warns ("Pick one in step 4") until a decision is picked or the selected
+     one is clicked to confirm it; copying before that shows a warning too.
+   - Page headers and footers (repeated on the pages, "Page 2 of 5", a
+     browser's print date and address) are left out.
+   - **SQL and code never go into the comment**: code lines are dropped and
+     SQL inside a sentence is replaced by "(SQL in the attached analysis)";
+     a sentence that introduced the code ("…would run:") points to the
+     attached analysis. Links keep their address in view: "text (https://…)".
+   - **Partner** comes from Partner, Customer, Agency or Organization lines.
+     A "Client:" line is never used: in Credible a client is a person
+     receiving services.
+   - Everything stays editable. If a file cannot be read (scanned image,
+     password-protected PDF, damaged file, old .doc), the message names the
+     file and the report that was already loaded stays as it was. Only the
+     last file added is used.
 3. Choose the **ticket owner** from the list (typed as `@Full Name`) and the
-   people **in copy**; the comment ends with `CC. @Eduardo Diaz`.
+   people **in copy**. The CC line is always the last line of the comment:
+   `CC: @Tim Mitchell @David Olaguivel @Eduardo Diaz`. By default the owner is
+   mentioned in that line, as in the team format; the owner can instead be
+   greeted ("Hi @Owner,"), put on the first line, or left out. An optional
+   signature goes just before the CC line.
 4. Choose the **decision**: confirmed defect (code analysis only, reproduced,
    or QA will reproduce), duplicate (original ID and reason), more information
-   needed (checklist of what to ask, business days on hold), configuration or
-   working as designed (steps for the administrator), or could not reproduce.
-   The next ADO step is suggested for each decision.
-5. Choose the **structure**. **Model 5, two layers** (Support first, technical
-   details for Dev and QA below a line) is the default; models 1 to 4 are
-   Decision first, Summary table, SBAR and Questions and answers. English or
-   Spanish labels.
-6. **Copy** with formatting (pastes with bold and lists into ADO), as plain
-   text, or only the Support part. **Improve with QAgent** copies a prompt that
+   needed (checklist of what to ask plus other questions for the reporter,
+   business days on hold), configuration issue (the solution with the
+   administrator's steps), working as designed (the options the partner has),
+   or could not reproduce (domain, role, what was tried, questions for the
+   reporter). The next ADO step is suggested for each decision.
+5. Choose the **structure**. The default, **Model 6: Root cause, solution,
+   validation**, follows the Sustainment team's format: an opening verdict
+   ("This is a configuration issue.") and bullet sections, always in this
+   order and only when they have content:
+
+   | Decision | Sections |
+   |---|---|
+   | Configuration issue | Root Cause, Solution (what to change, the administrator's steps nested under it, the result), Validation |
+   | Working as designed | Root Cause, Suggested Solution, Validation, Root Cause (Technical Explanation) |
+   | Confirmed defect | Root Cause, Solution (what has to change, proposed fix, workaround), Validation (reproduction), Root Cause (Technical Explanation), Next Steps |
+   | Duplicate | Root Cause, Duplicate Of (original ticket, reason, link), Validation, Root Cause (Technical Explanation), Next Steps |
+   | More information needed | What We Checked, Information Needed, Validation, Technical Details, Next Steps |
+   | Could not reproduce | What We Checked, What We Tested, Information Needed, Technical Details, Next Steps |
+
+   Next Steps appears for defects, duplicates, "could not reproduce" and "more
+   information needed"; for configuration and working as designed (as in the
+   team's examples) only when there is something to tell the partner or a
+   next step was picked on purpose. The technical section appears when
+   "Include technical details" is on and it has content (technical
+   explanation, files, verification, attached analysis); the proposed fix
+   list only appears for confirmed defects. The other structures are Model 5 (two layers: Support, then
+   technical), Decision first, Summary table, SBAR and Questions and answers.
+   English or Spanish labels.
+
+   **Writing the sections.** Root cause, Solution, Suggested solution,
+   Validation and Technical explanation accept one bullet per line; a line
+   that starts with two spaces (or a tab) nests under the bullet above, and
+   deeper indentation nests further; lines between two ```` ``` ```` lines
+   form a code block (for example a stored procedure call). Text pasted from
+   an ADO comment keeps its bullets, nesting and code, and numbered lines
+   become bullets. A single paragraph in Root cause becomes one bullet per
+   sentence. Buttons insert recurring text ("Not a recent change", "Steps for
+   the administrator", "Sign out and back in", "Data update with the DBA
+   team", "Enhancement request"); replace the text in [brackets] before
+   copying, the hub reminds you. The comment being written survives a reload
+   of the browser tab; **New comment** clears it.
+6. **Copy** with formatting (pastes with bold, lists and code into ADO's rich
+   text editor), as plain text (with `*` bullets and ```` ``` ```` code blocks,
+   which ADO's Markdown editor renders), or only the Support part (without
+   the technical section). **Improve with QAgent** copies a prompt that
    asks QAgent to polish the draft without adding facts.
 
 Other details:
@@ -91,13 +181,15 @@ Other details:
   a hint, not a guarantee.
 - **ADO mentions**: pasted `@Name` text is not a real mention. After pasting,
   retype `@` before each name and pick the person so ADO notifies them.
-- SQL is never copied into the comment; the comment points to the attached
-  analysis.
+- SQL from the report is never copied into the comment by itself; the comment
+  points to the attached analysis. Code you write or paste in the technical
+  explanation is kept as a code block.
 
 ## Requirements
 
-Node.js **22.13 or later** (Node 24 LTS works too). The only dependency is the
-PostgreSQL driver (`npm install`).
+Node.js **24 LTS** (22.13 or later also works on your own server). Dependencies
+are the two PostgreSQL drivers (`npm install`): Neon's serverless driver for
+Neon and `pg` for any other PostgreSQL.
 
 ## Local edition: one HTML file, no server
 
@@ -158,25 +250,76 @@ with only the admin account; everyone else creates their own account.
 
 ### Option A: Vercel + Neon (PostgreSQL)
 
+Vercel functions have no disk that survives between requests, so the SQLite
+file cannot be used there: on Vercel the hub needs **Neon**, a serverless
+PostgreSQL that Vercel offers in its Marketplace (free plan available). The hub
+talks to Neon over HTTPS with Neon's serverless driver, so no database
+connection has to stay open between requests, and it creates its tables by
+itself on the first visit.
+
 Use a Vercel team and repository owned by Qualifacts, not a personal account,
 because the database holds company usage data.
 
-1. Push this project to a Git repository (Azure DevOps, GitHub or GitLab).
-2. In Vercel, **Add New > Project**, import the repository. Framework preset:
-   **Other**. Leave build and output settings as they are (`vercel.json`
-   sets them).
-3. In the project, **Storage > Create Database > Neon (Postgres)** and connect
-   it to the project. This adds `DATABASE_URL` to the environment variables.
-4. Optional: add `ADMIN_PASSWORD`, `REQUIRE_PASSWORD_CHANGE`,
-   `REPORT_TIMEZONE` under **Settings > Environment Variables**.
-5. **Deploy**. Open `https://<project>.vercel.app/healthz`; it should answer
-   `{"ok":true,"database":"postgres"}`.
-6. Sign in as `admin` / `654321` and change the password.
+1. **Repository.** Push this project to a Git repository (Azure DevOps,
+   GitHub or GitLab). Do not commit `.env`, `node_modules` or `storage/*.db`
+   (`.gitignore` already excludes them).
+2. **Project.** In Vercel, **Add New > Project** and import the repository.
+   Framework preset: **Other**. Leave Build Command and Install Command at
+   their defaults (there is no build step; Vercel runs `npm install`) and do
+   not override Output Directory: `vercel.json` sets it to `public` and routes
+   `/api/*` to the serverless function. Node.js 24 comes from `package.json`. You can deploy now; the site will say it has no database yet.
+3. **Database.** In the project open **Storage**, choose **Create Database**
+   (or **Connect Database**), pick **Neon (Serverless Postgres)**, accept the
+   integration, choose the **Free** plan and the region **Washington, D.C. /
+   AWS us-east-1** (the same region as Vercel's default functions), and create
+   it. When Vercel asks which environments to connect, select **Production,
+   Preview and Development** and leave the prefix empty. Vercel then adds
+   `DATABASE_URL` (and a few other `PG*`/`POSTGRES_*` variables) to the
+   project.
+4. **Redeploy.** Environment variables only reach new deployments: open
+   **Deployments**, select the latest one and choose **Redeploy**.
+5. **Check.** Open `https://<your-project>.vercel.app/healthz`. It should show
+   `"ok":true,"database":"postgres","driver":"neon"`. If it shows an error,
+   the message says what is missing.
+6. **Admin.** Sign in as `admin` / `654321` and change the password under
+   **Settings > Password**.
+7. Optional variables under **Settings > Environment Variables**:
+   `REQUIRE_PASSWORD_CHANGE`, `REPORT_TIMEZONE`, `ADMIN_PASSWORD` (only used
+   when the admin account is first created). Redeploy after changing them.
+
+If the organization cannot install Marketplace integrations, create the
+database at [neon.tech](https://neon.tech) instead (**New project**, region AWS
+us-east-1), copy the connection string from **Connect** (it looks like
+`postgresql://user:password@ep-....us-east-1.aws.neon.tech/neondb?sslmode=require`),
+add it in Vercel as the environment variable `DATABASE_URL` for all
+environments, and redeploy.
+
+**Test the connection from your PC** before or after deploying. With the
+connection string in `.env` (`DATABASE_URL=...`) or in the terminal:
+
+```bash
+npm install
+npm run db:check
+```
+
+It connects, creates or updates the tables, creates the admin account and lists
+each table with its number of rows.
+
+**Troubleshooting**
+
+| What you see | What to do |
+|---|---|
+| "The hub is not ready yet ... has no database yet" | The database is not connected to this project or the deployment is older than the connection: connect Neon (step 3) and redeploy (step 4). |
+| `/healthz` shows `password authentication failed` | The connection string is outdated (password reset in Neon). Reconnect the database or update `DATABASE_URL`, then redeploy. |
+| `/healthz` shows `"driver":"pg"` with a Neon host | Remove `DB_DRIVER` from the environment variables, or set it to `auto`. |
+| Build fails with a Node.js version message | In **Settings > Build and Deployment > Node.js Version** choose 24.x, or keep `engines` in `package.json` as it is. |
+| A 404 for `/api/...` | Check that `vercel.json` and the `api/` folder are at the root of the repository (the folder that holds `package.json`), or set **Root Directory** to that folder. |
 
 How it runs: `public/` is served by Vercel's CDN; `api/index.js` runs the API
 as a serverless function. The prompt catalog is only served to signed-in
 people (`/api/catalog.js`). Sign-in attempts are throttled per function
-instance.
+instance. If the database is asleep or unreachable on the first request, a
+later request starts the hub again instead of leaving it broken.
 
 ### Option B: company server with Docker (hub + PostgreSQL)
 
@@ -198,7 +341,7 @@ docker run -d -p 3000:3000 -e DATABASE_URL=postgres://user:pass@host:5432/hub qa
 
 ### Option C: Windows or Linux server without Docker
 
-Install Node.js 22 LTS or later, copy the project, then `npm ci --omit=dev`
+Install Node.js 24 LTS (or 22.13 or later), copy the project, then `npm ci --omit=dev`
 and `npm start`. Run it as a service (NSSM on Windows, systemd on Linux)
 behind IIS or nginx with HTTPS. Set `DATABASE_URL` for PostgreSQL, or leave it
 empty for SQLite in `storage/`.
@@ -216,8 +359,9 @@ Environment variables, or a `.env` file (see `.env.example`).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | empty | PostgreSQL connection string. `POSTGRES_URL` also works. Empty means SQLite |
-| `DB_POOL_MAX` | `10` (`3` on Vercel) | PostgreSQL connections per server or function instance |
+| `DATABASE_URL` | empty | PostgreSQL connection string. `POSTGRES_URL` and prefixed names from the Vercel Marketplace (for example `STORAGE_DATABASE_URL`) also work. Empty means SQLite (not possible on Vercel) |
+| `DB_DRIVER` | `auto` | `auto` uses Neon's serverless driver for `*.neon.tech` hosts and `pg` for any other PostgreSQL; `neon` or `pg` force one |
+| `DB_POOL_MAX` | `10` (`3` on Vercel) | Connections per instance with the `pg` driver |
 | `DB_PATH` | `storage/hub.db` | SQLite file, when there is no `DATABASE_URL` |
 | `SQLITE_JOURNAL_MODE` | `WAL` | `DELETE` on network storage |
 | `PORT` | `3000` | HTTP port |
@@ -255,7 +399,10 @@ charts (in the hub or in Power BI connected to PostgreSQL) can use it.
 | `auth_sessions` | Active sign-ins (hashed tokens) |
 
 Admin activity is not recorded. **Raw events (CSV)** in the admin dashboard downloads the
-`events` table as CSV for Excel or Power BI.
+`events` table, with the dashboard filters applied, as CSV for Excel or Power BI.
+Long periods are split into parts (12,000 rows each on Vercel, whose responses
+are limited to 4.5 MB; 100,000 rows on a normal server). For the full history,
+connect Power BI directly to the PostgreSQL database.
 
 **What is never sent to the server**: the text people paste into prompts
 (code, logs, documents), the QAgent reports they open in the comment generator
@@ -309,13 +456,16 @@ server/server.js          Standalone server: static files + API
 server/db.js              SQLite and PostgreSQL adapters, migrations
 server/metrics.js         Admin reports and CSV export
 server/config.js          Settings and .env loading
-server/seed-demo.js       Demo data generator
+server/util.js            Passwords, tokens, dates and catalog loading
+server/seed-demo.js       Demo data generator (npm run seed:demo)
+server/demo.js            npm run demo: rebuilds the demo database and starts the server
 catalog/prompts.js        Prompt catalog, categories, stages, platforms, guide
 public/index.html         App shell
-public/assets/js/         app.js, comment.js (comment generator), admin.js, charts.js
+public/assets/js/         boot.js (theme before first paint), app.js, comment.js (comment generator), admin.js, charts.js
 public/assets/vendor/     PDF.js and Mammoth (licenses included), loaded on demand
 public/assets/css/        Styles with the Qualifacts palette, light and dark
 tools/build-local.js      Builds the one-file local edition into dist/
+tools/db-check.js         npm run db:check: tests the database connection and creates the tables
 vercel.json               Vercel settings and security headers
 Dockerfile, docker-compose.yml
 storage/                  SQLite databases (not committed)

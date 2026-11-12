@@ -327,6 +327,8 @@
   const normalizeCmd = (v) => { let c = String(v || '').trim().split(/\s+/)[0] || ''; if (c && c[0] !== '/') c = '/' + c; return c; };
   const agentDef = (cmd) => (D.agents || []).find((a) => a.cmd.toLowerCase() === String(cmd || '').toLowerCase()) || null;
   function agentProblem(cmd) {
+    const typed = String(state.settings.agentCustom || '').trim();
+    if (agentChoice() === 'custom' && /\s/.test(typed)) return 'An agent command is a single word, for example /product.';
     if (!cmd) return 'Type the agent command, for example /product.';
     if (!AGENT_RE.test(cmd)) return 'Use the command as /switch shows it: a slash and one word.';
     const lower = cmd.toLowerCase();
@@ -539,6 +541,9 @@
     } catch (e) { return false; }
   }
   function toast(msg, kind) {
+    // The same message again replaces the earlier one, and at most three stay on screen.
+    [...$('#toasts').children].forEach((x) => { if (x.textContent === String(msg)) x.remove(); });
+    while ($('#toasts').children.length >= 3) $('#toasts').firstElementChild.remove();
     const el = document.createElement('div');
     el.className = 'toast' + (kind === 'warn' ? ' warn' : '');
     el.innerHTML = icon(kind === 'warn' ? 'info' : 'check') + `<span>${esc(msg)}</span>`;
@@ -923,9 +928,9 @@
     flush();
     sendHeartbeat();
     stopHeartbeat();
+    if (window.QPHComment && window.QPHComment.reset) window.QPHComment.reset(); // clears the comment draft of this user
     state.user = null;
     state.favs = new Set(); state.ratings = {}; state.usage = {}; state.custom = []; state.vars = {};
-    if (window.QPHComment && window.QPHComment.reset) window.QPHComment.reset();
     closeModal();
     showAuth('signin', { message });
   }
@@ -2177,7 +2182,9 @@
     try {
       state.config = await api('GET', '/api/config');
     } catch (e) {
-      $('#splash').innerHTML = `<div class="empty"><h2>Cannot reach the server</h2><p>${esc(e.message)} The hub needs its server running; see README.md.</p></div>`;
+      $('#splash').innerHTML = e.code === 'setup'
+        ? `<div class="empty"><h2>The hub is not ready yet</h2><p>${esc(e.message)}</p><p class="muted">Administrators: open <code>/healthz</code> on this site for the details.</p><button class="btn" data-act="reload">Try again</button></div>`
+        : `<div class="empty"><h2>Cannot reach the server</h2><p>${esc(e.message)} The hub needs its server running; see README.md.</p><button class="btn" data-act="reload">Try again</button></div>`;
       return;
     }
     try {
@@ -2185,6 +2192,8 @@
       onSignedIn(me);
     } catch (e) {
       if (e.code === 'password_change_required') return;
+      // Nobody is signed in (for example the session expired): drop any comment draft left in this tab.
+      if (window.QPHComment && window.QPHComment.reset) window.QPHComment.reset();
       showAuth('signin');
     }
   }

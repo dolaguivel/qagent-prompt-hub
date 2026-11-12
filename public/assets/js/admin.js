@@ -19,7 +19,7 @@
     ['copies', 'Copies'], ['users', 'Active people'], ['minutes', 'Minutes in app'], ['views', 'Views'], ['comments', 'Ticket comments']
   ];
   const DECISION_LABELS = { defect: 'Confirmed defect', duplicate: 'Duplicate', info: 'More information needed', config: 'Configuration', design: 'Working as designed', cannot: 'Could not reproduce', unknown: 'Not recorded' };
-  const MODEL_LABELS = { 1: 'Model 1: Decision first', 2: 'Model 2: Summary table', 3: 'Model 3: SBAR', 4: 'Model 4: Questions and answers', 5: 'Model 5: Two layers' };
+  const MODEL_LABELS = { 1: 'Model 1: Decision first', 2: 'Model 2: Summary table', 3: 'Model 3: SBAR', 4: 'Model 4: Questions and answers', 5: 'Model 5: Two layers', 6: 'Model 6: Root cause, solution, validation' };
   const FILTER_KEYS = ['range', 'from', 'to', 'team', 'area', 'system', 'category', 'stage', 'user'];
 
   const mod = {
@@ -98,7 +98,7 @@
           <p>How people across Qualifacts use the prompts: what they copy, how they rate it and how much time they spend in the hub. Admin activity is not counted.</p>
         </div>
         <div class="detail-actions">
-          <a class="btn btn-sm" href="/api/admin/export.csv${apiQuery(params)}" download>${C.icon('download')}<span>Raw events (CSV)</span></a>
+          <button type="button" class="btn btn-sm" data-act="admin-export">${C.icon('download')}<span>Raw events (CSV)</span></button>
         </div>
       </div>
       <nav class="admin-tabs" aria-label="Dashboard sections">${TABS.map(([k, l]) => `<a href="${tabHref(k, params)}" ${k === tab ? 'aria-current="page" class="active"' : ''}>${l}</a>`).join('')}</nav>
@@ -185,6 +185,35 @@
   const promptLink = (r) => `<a href="#/prompt/${encodeURIComponent(r.id)}">${C.esc(r.title)}</a>${r.custom ? `<small class="muted"> · custom${r.author ? ' by ' + C.esc(r.author) : ''}</small>` : ''}`;
   const filterLink = (key, value, label) => value ? `<button type="button" class="link" data-act="admin-filter" data-key="${C.esc(key)}" data-val="${C.esc(value)}" title="Filter by ${C.esc(label || value)}">${C.esc(label || value)}</button>` : '–';
 
+  /* ---------------- Raw events export ---------------- */
+  // Large periods are split into parts so every download stays within the hosting limits.
+  async function exportEvents(params, btn) {
+    const query = apiQuery(params);
+    const link = (part) => `/api/admin/export.csv${query}${query ? '&' : '?'}part=${part}`;
+    if (btn) btn.disabled = true;
+    try {
+      const info = await C.api('GET', `/api/admin/export-info${query}`);
+      if (info.parts <= 1) {
+        const a = document.createElement('a');
+        a.href = link(1); a.download = '';
+        document.body.appendChild(a); a.click(); a.remove();
+        return;
+      }
+      const items = Array.from({ length: info.parts }, (_, i) => {
+        const first = i * info.partRows + 1;
+        const last = Math.min(info.rows, (i + 1) * info.partRows);
+        return `<li><a class="btn btn-sm" href="${link(i + 1)}" download>${C.icon('download', 'i-sm')}<span>Part ${i + 1}: rows ${C.num(first)} to ${C.num(last)}</span></a></li>`;
+      }).join('');
+      C.openModal(`<h2 id="modalTitle">Raw events (CSV)</h2>
+        <p class="muted">${C.num(info.rows)} events between ${C.esc(info.from)} and ${C.esc(info.to)}, split into ${info.parts} files of up to ${C.num(info.partRows)} rows. For the full history in Power BI, connect it to the database instead (see the README).</p>
+        <ul class="export-parts">${items}</ul>`);
+    } catch (e) {
+      C.toast(e.message, 'warn');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   /* ---------------- Overview ---------------- */
   function paintOverview(body, d, params) {
     const k = d.kpis;
@@ -233,7 +262,7 @@
 
       <div class="dash-grid">
         ${card('Ticket comments by decision', cm.total ? `${C.plural(cm.total, 'comment')} copied for Azure DevOps in the period` : 'No ticket comments in the period', '<div id="byDecision"></div>', { actions: `<a class="btn btn-sm btn-ghost" href="${tabHref('people', params)}">By team and person</a>` })}
-        ${card('Comment structure used', 'Which of the five structures people choose', '<div id="byModel"></div>')}
+        ${card('Comment structure used', 'Which of the six structures people choose', '<div id="byModel"></div>')}
       </div>
 
       ${card('When people use the hub', 'Prompt copies by weekday and hour, in the reporting time zone', '<div id="heat"></div>')}
@@ -465,6 +494,7 @@
         break;
       }
       case 'admin-csv': csvFor(el.dataset.table); break;
+      case 'admin-export': exportEvents(params, el); break;
       case 'admin-prompt-filter': mod.promptFilter = el.dataset.val; paint('prompts', params); break;
       case 'admin-user-status': mod.userStatus = el.dataset.val; paintUsers(document.getElementById('adminBody')); break;
       case 'admin-edit-user': editUser(Number(el.dataset.id)); break;

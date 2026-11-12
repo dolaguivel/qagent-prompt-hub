@@ -4,9 +4,13 @@
  *
  *   SQLite      a single file; for a company server or a PC. Uses Node's
  *               built-in driver (node:sqlite), nothing to install.
- *   PostgreSQL  for Vercel and other serverless or multi-instance hosts
- *               (Neon, Supabase, Azure Database for PostgreSQL...). Selected
- *               automatically when DATABASE_URL (or POSTGRES_URL) is set.
+ *   PostgreSQL  for Vercel and other serverless or multi-instance hosts.
+ *               Selected automatically when DATABASE_URL (or POSTGRES_URL) is set.
+ *               - Neon (recommended for Vercel): queries go over HTTPS with
+ *                 Neon's serverless driver, so no connection has to survive
+ *                 between function invocations.
+ *               - Any other PostgreSQL (company server, Docker, Azure...):
+ *                 the classic "pg" driver over TCP with a small pool.
  *
  * Every query in the app is written once, with "?" placeholders and SQL that
  * both engines understand; the adapter converts placeholders for Postgres.
@@ -185,6 +189,7 @@ function sqliteAdapter(dbPath, journalMode) {
   const norm = (params) => (params || []).map((v) => (typeof v === 'boolean' ? (v ? 1 : 0) : v === undefined ? null : v));
   return {
     dialect: 'sqlite',
+    driver: 'sqlite',
     describe: `SQLite (${dbPath})`,
     async get(sql, params) { return stmt(sql).get(...norm(params)); },
     async all(sql, params) { return stmt(sql).all(...norm(params)); },
@@ -236,6 +241,7 @@ async function postgresAdapter(url, opts) {
   try { host = `PostgreSQL (${new URL(url).hostname})`; } catch (e) { /* keep generic */ }
   return {
     dialect: 'postgres',
+    driver: 'pg',
     describe: host,
     async get(sql, params) { return (await q(sql, params)).rows[0]; },
     async all(sql, params) { return (await q(sql, params)).rows; },
@@ -245,8 +251,81 @@ async function postgresAdapter(url, opts) {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Neon (PostgreSQL over HTTPS)                                        */
+/* ------------------------------------------------------------------ */
+const isNeonUrl = (url) => { try { return /\.neon\.tech$/i.test(new URL(url).hostname); } catch (e) { return false; } };
+const PG_NUMERIC_TYPES = new Set([20, 1700]); // BIGINT and NUMERIC come back as text
+
+async function neonAdapter(url) {
+  let driver;
+  try { driver = require('@neondatabase/serverless'); } catch (e) {
+    throw new Error('The database is on Neon but the "@neondatabase/serverless" package is missing. Run "npm install".');
+  }
+  // Only for local testing against a stand-in for Neon's HTTP endpoint.
+  if (process.env.NEON_HTTP_ENDPOINT) driver.neonConfig.fetchEndpoint = process.env.NEON_HTTP_ENDPOINT;
+  const sql = driver.neon(url, { fullResults: true });
+  const norm = (params) => (params || []).map((v) => (typeof v === 'boolean' ? (v ? 1 : 0) : v === undefined ? null : v));
+  // Same numbers as the "pg" adapter: BIGINT and NUMERIC as JavaScript numbers.
+  const numbers = (r) => {
+    const cols = (r.fields || []).filter((f) => PG_NUMERIC_TYPES.has(f.dataTypeID)).map((f) => f.name);
+    if (cols.length) for (const row of r.rows) for (const c of cols) if (row[c] != null) row[c] = Number(row[c]);
+    return r;
+  };
+  let host = 'Neon';
+  try { host = new URL(url).hostname; } catch (e) { /* keep generic */ }
+  const q = async (text, params) => {
+    try {
+      return numbers(await sql.query(convertPlaceholders(text), norm(params)));
+    } catch (err) {
+      // Network failures come back as "fetch failed"; say which database could not be reached.
+      if (/fetch failed|Error connecting to database|ENOTFOUND|ECONNREFUSED|ETIMEDOUT/i.test(String(err && err.message))) {
+        const e = new Error(`Cannot reach the Neon database at ${host} (${err.message}). Check DATABASE_URL and that this computer or deployment can reach neon.tech.`);
+        e.cause = err;
+        throw e;
+      }
+      throw err;
+    }
+  };
+
+  // Migrations run in one HTTP transaction. Each one first inserts its version
+  // row, so if two cold starts race, the second fails on the primary key, rolls
+  // back and finds the schema already up to date on the retry.
+  try { await q('CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY, applied_at BIGINT NOT NULL)'); } catch (e) {
+    if (/Cannot reach/.test(e.message)) throw e; // otherwise another instance created it at the same moment
+  }
+  for (let attempt = 1; ; attempt++) {
+    const current = Number((await q('SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations')).rows[0].v);
+    if (current >= MIGRATIONS.length) break;
+    const batch = [sql.query('SELECT pg_advisory_xact_lock(726354)')];
+    for (let v = current; v < MIGRATIONS.length; v++) {
+      batch.push(sql.query('INSERT INTO schema_migrations (version, applied_at) VALUES ($1, $2)', [v + 1, Date.now()]));
+      for (const st of statements(toPostgres(MIGRATIONS[v]))) batch.push(sql.query(st));
+    }
+    try { await sql.transaction(batch); break; } catch (err) {
+      if (attempt >= 3) throw err;
+      await new Promise((r) => setTimeout(r, 300 * attempt));
+    }
+  }
+
+  return {
+    dialect: 'postgres',
+    driver: 'neon',
+    describe: `Neon PostgreSQL (${host})`,
+    async get(text, params) { return (await q(text, params)).rows[0]; },
+    async all(text, params) { return (await q(text, params)).rows; },
+    async run(text, params) { const r = await q(text, params); return { changes: r.rowCount }; },
+    async exec(text) { for (const st of statements(text)) await q(st); },
+    async close() { /* HTTP: nothing to close */ }
+  };
+}
+
 async function open(config) {
-  if (config.databaseUrl) return postgresAdapter(config.databaseUrl, { poolMax: config.dbPoolMax });
+  if (config.databaseUrl) {
+    const driver = config.dbDriver === 'neon' || config.dbDriver === 'pg' ? config.dbDriver : (isNeonUrl(config.databaseUrl) ? 'neon' : 'pg');
+    if (driver === 'neon') return neonAdapter(config.databaseUrl);
+    return postgresAdapter(config.databaseUrl, { poolMax: config.dbPoolMax });
+  }
   return sqliteAdapter(config.dbPath, config.sqliteJournalMode);
 }
 

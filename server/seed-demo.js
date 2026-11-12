@@ -134,7 +134,7 @@ function seedDemo() {
             if (s === 0 && rand() < 0.5) add('login', null, u.system, null);
             if (rand() < 0.22) {
               const decision = weighted(DECISIONS, (d) => d[1])[0];
-              add('comment', null, u.system, { decision, model: rand() < 0.75 ? 5 : pick([1, 2, 3, 4]), language: rand() < 0.88 ? 'en' : 'es', technical: rand() < 0.8, via: rand() < 0.2 ? 'qagent' : 'copy' });
+              add('comment', null, u.system, { decision, model: rand() < 0.6 ? 6 : rand() < 0.5 ? 5 : pick([1, 2, 3, 4]), language: rand() < 0.88 ? 'en' : 'es', technical: rand() < 0.8, via: rand() < 0.2 ? 'qagent' : 'copy' });
             }
             if (rand() < 0.35) { const [q, hit] = pick(SEARCHES); add('search', null, u.system, { q, results: hit ? between(1, 8) : 0 }); }
             const n = between(1, 4);

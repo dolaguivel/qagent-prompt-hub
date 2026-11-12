@@ -166,7 +166,10 @@ async function compute(db, catalog, query, tz) {
   const byStage = await breakdown('e.stage', null, null);
 
   /* Ticket comments */
-  const commentRows = await db.all(`SELECT e.meta, e.team, e.area, e.platform, e.user_id FROM events e ${ec.sql} AND e.type = 'comment'`, ec.params);
+  // Grouped in the database so the result stays small however many events there are.
+  const commentRows = await db.all(`SELECT e.meta, e.team, e.area, e.platform, e.user_id, COUNT(*) AS n FROM events e ${ec.sql} AND e.type = 'comment'
+      GROUP BY e.meta, e.team, e.area, e.platform, e.user_id`, ec.params);
+  let commentTotal = 0;
   const decisionCounts = new Map();
   const modelCounts = new Map();
   const commentsByUser = new Map();
@@ -176,16 +179,18 @@ async function compute(db, catalog, query, tz) {
   for (const r of commentRows) {
     let m = {};
     try { m = JSON.parse(r.meta || '{}'); } catch (e) { /* ignore */ }
+    const n = Number(r.n) || 0;
+    commentTotal += n;
     const dkey = m.decision || 'unknown';
-    decisionCounts.set(dkey, (decisionCounts.get(dkey) || 0) + 1);
-    if (m.model) modelCounts.set(String(m.model), (modelCounts.get(String(m.model)) || 0) + 1);
-    commentsByUser.set(r.user_id, (commentsByUser.get(r.user_id) || 0) + 1);
-    if (r.team) commentsByTeam.set(r.team, (commentsByTeam.get(r.team) || 0) + 1);
-    if (r.area) commentsByArea.set(r.area, (commentsByArea.get(r.area) || 0) + 1);
-    if (r.platform) commentsBySystem.set(r.platform, (commentsBySystem.get(r.platform) || 0) + 1);
+    decisionCounts.set(dkey, (decisionCounts.get(dkey) || 0) + n);
+    if (m.model) modelCounts.set(String(m.model), (modelCounts.get(String(m.model)) || 0) + n);
+    commentsByUser.set(r.user_id, (commentsByUser.get(r.user_id) || 0) + n);
+    if (r.team) commentsByTeam.set(r.team, (commentsByTeam.get(r.team) || 0) + n);
+    if (r.area) commentsByArea.set(r.area, (commentsByArea.get(r.area) || 0) + n);
+    if (r.platform) commentsBySystem.set(r.platform, (commentsBySystem.get(r.platform) || 0) + n);
   }
   const comments = {
-    total: commentRows.length,
+    total: commentTotal,
     byDecision: [...decisionCounts.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n),
     byModel: [...modelCounts.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n),
     byTeam: [...commentsByTeam.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n)
@@ -193,19 +198,22 @@ async function compute(db, catalog, query, tz) {
   for (const t of byTeam) t.comments = commentsByTeam.get(t.key) || 0;
 
   /* How prompts were sent: the QAgent agent and the file deliverable chosen when copying */
-  const copyRows = await db.all(`SELECT e.meta FROM events e ${ew.sql} AND e.type = 'copy' ORDER BY e.ts DESC LIMIT 200000`, ew.params);
+  const copyRows = await db.all(`SELECT e.meta, COUNT(*) AS n FROM events e ${ew.sql} AND e.type = 'copy' GROUP BY e.meta`, ew.params);
   const agentCounts = new Map();
   const fileCounts = new Map();
+  let copyTotal = 0;
   for (const r of copyRows) {
     let m = {};
     try { m = JSON.parse(r.meta || '{}'); } catch (e) { /* ignore */ }
+    const n = Number(r.n) || 0;
+    copyTotal += n;
     const agent = m.agent || (m.product ? '/product' : ''); // older copies only had a /product switch
-    agentCounts.set(agent, (agentCounts.get(agent) || 0) + 1);
+    agentCounts.set(agent, (agentCounts.get(agent) || 0) + n);
     const file = m.file === 'docx' || m.file === 'xlsx' ? m.file : '';
-    fileCounts.set(file, (fileCounts.get(file) || 0) + 1);
+    fileCounts.set(file, (fileCounts.get(file) || 0) + n);
   }
   const toRows = (map) => [...map.entries()].map(([key, n]) => ({ key, n })).sort((a, b) => b.n - a.n);
-  const sendOptions = { total: copyRows.length, byAgent: toRows(agentCounts), byFile: toRows(fileCounts) };
+  const sendOptions = { total: copyTotal, byAgent: toRows(agentCounts), byFile: toRows(fileCounts) };
   for (const t of byArea) t.comments = commentsByArea.get(t.key) || 0;
   for (const t of bySystem) t.comments = commentsBySystem.get(t.key) || 0;
 
@@ -232,16 +240,17 @@ async function compute(db, catalog, query, tz) {
   const heat = await db.all(`SELECT e.dow, e.hour, COUNT(*) AS n FROM events e ${ew.sql} AND e.type = 'copy' GROUP BY e.dow, e.hour`, ew.params);
 
   /* Searches */
-  const searchRows = await db.all(`SELECT e.meta FROM events e ${ec.sql} AND e.type = 'search' ORDER BY e.ts DESC LIMIT 20000`, ec.params);
+  const searchRows = await db.all(`SELECT e.meta, COUNT(*) AS n FROM events e ${ec.sql} AND e.type = 'search' GROUP BY e.meta ORDER BY COUNT(*) DESC LIMIT 20000`, ec.params);
   const sMap = new Map();
   for (const r of searchRows) {
     let m;
     try { m = JSON.parse(r.meta || '{}'); } catch (e) { continue; }
     const q = String(m.q || '').toLowerCase().trim();
     if (q.length < 2) continue;
+    const n = Number(r.n) || 0;
     const s = sMap.get(q) || { q, count: 0, zero: 0 };
-    s.count++;
-    if (!m.results) s.zero++;
+    s.count += n;
+    if (!m.results) s.zero += n;
     sMap.set(q, s);
   }
   const searches = [...sMap.values()].sort((a, b) => b.count - a.count).slice(0, 50);
@@ -282,13 +291,24 @@ async function compute(db, catalog, query, tz) {
   };
 }
 
-/* Raw events for the CSV export */
-async function exportEvents(db, catalog, query, tz) {
+/* Raw events for the CSV export, in parts so each download stays below the
+ * hosting limits (Vercel functions answer with at most 4.5 MB). */
+async function exportInfo(db, query, tz, partRows) {
+  const f = parseFilters(query, tz);
+  const ew = eventsWhere(f);
+  const rows = Number((await db.get(`SELECT COUNT(*) AS n FROM events e ${ew.sql}`, ew.params)).n) || 0;
+  return { rows, partRows, parts: Math.max(1, Math.ceil(rows / partRows)), from: f.from, to: f.to };
+}
+async function exportEvents(db, catalog, query, tz, partRows = 100000) {
   const f = parseFilters(query, tz);
   const info = await promptInfo(db, catalog);
   const ew = eventsWhere(f);
+  const part = Math.max(1, Math.floor(Number(query.part) || 1));
+  const total = Number((await db.get(`SELECT COUNT(*) AS n FROM events e ${ew.sql}`, ew.params)).n) || 0;
+  const parts = Math.max(1, Math.ceil(total / partRows));
+  if (part > parts) { const e = new Error(`This export has ${parts} part${parts === 1 ? '' : 's'}.`); e.status = 404; e.code = 'part'; throw e; }
   const rows = await db.all(`SELECT e.ts, e.day, e.type, e.prompt_id, e.category, e.stage, e.platform, e.team, e.area, e.meta, u.name, u.email
-      FROM events e JOIN users u ON u.id = e.user_id ${ew.sql} ORDER BY e.ts LIMIT 200000`, ew.params);
+      FROM events e JOIN users u ON u.id = e.user_id ${ew.sql} ORDER BY e.ts, e.id LIMIT ${Number(partRows)} OFFSET ${(part - 1) * Number(partRows)}`, ew.params);
   const header = ['timestamp_utc', 'day', 'user', 'email', 'team', 'area', 'event', 'prompt_id', 'prompt', 'category', 'stage', 'system', 'details'];
   const csvCell = (v) => {
     let s = v == null ? '' : String(v);
@@ -300,7 +320,8 @@ async function exportEvents(db, catalog, query, tz) {
     lines.push([new Date(r.ts).toISOString(), r.day, r.name, r.email, r.team, r.area, r.type, r.prompt_id,
       r.prompt_id ? (info.get(r.prompt_id) || {}).title : '', r.category, r.stage, r.platform, r.meta].map(csvCell).join(','));
   }
-  return { filename: `qagent-prompt-hub-events_${f.from}_${f.to}.csv`, body: '﻿' + lines.join('\r\n') };
+  const suffix = parts > 1 ? `_part${part}-of-${parts}` : '';
+  return { filename: `qagent-prompt-hub-events_${f.from}_${f.to}${suffix}.csv`, body: '﻿' + lines.join('\r\n') };
 }
 
-module.exports = { compute, exportEvents, parseFilters };
+module.exports = { compute, exportEvents, exportInfo, parseFilters };

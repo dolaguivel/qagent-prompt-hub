@@ -967,6 +967,7 @@ th.num .th-sort { text-align: right; }
 .cg-found { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
 .cg-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: var(--surface-3); color: var(--ink-3); font-size: 12.5px; }
 .cg-chip.ok { background: var(--accent-bg); color: var(--accent); font-weight: 700; }
+.cg-chip.is-kept { background: transparent; border: 1px dashed var(--line-2); color: var(--ink-3); font-weight: 600; }
 .cg-chip .i { width: 13px; height: 13px; }
 .cg-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 32px; font-size: 13.5px; }
 .cg-person { display: inline-flex; align-items: center; gap: 2px; padding: 2px 2px 2px 10px; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font-weight: 700; font-size: 13.5px; }
@@ -1023,3 +1024,20 @@ th.num .th-sort { text-align: right; }
 .field .help.is-error { color: var(--danger); }
 .agent-field input { margin-top: 2px; font-family: var(--font-mono); font-size: 13.5px; }
 .segmented button .i-sm { width: 14px; height: 14px; }
+
+/* Comment generator: quick inserts and code in the preview */
+.cg-inserts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -6px; }
+.cg-inserts .btn { color: var(--accent); }
+.cg-paper pre { overflow-x: auto; }
+
+/* Comment generator: copy buttons stay visible while the preview scrolls */
+.cg-actions { position: sticky; bottom: -18px; z-index: 2; background: var(--surface); padding: 10px 0 12px; margin-bottom: -6px; box-shadow: 0 -10px 12px -10px rgba(17, 26, 54, .18); }
+@media (max-width: 1100px) { .cg-actions { bottom: 0; padding-left: 4px; padding-right: 4px; } }
+.cg-paper code { font-family: var(--font-mono); font-size: 12.5px; }
+.export-parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+/* Comment generator: fields filled from the report */
+.field.is-auto input, .field.is-auto textarea, .field.is-auto select { border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2)); background: color-mix(in srgb, var(--accent-bg) 55%, var(--surface)); }
+.cg-auto-tag { margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font-size: 11.5px; font-weight: 700; vertical-align: 1px; }
+
+.help.cg-pick { color: var(--warn, #9a5b00); font-weight: 700; }

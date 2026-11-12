@@ -24,6 +24,24 @@ const env = process.env;
 const bool = (v, d) => (v === undefined || v === '' ? d : /^(1|true|yes|on)$/i.test(v));
 const onVercel = !!env.VERCEL;
 
+// The PostgreSQL connection string. DATABASE_URL is the usual name; the Neon
+// integration in the Vercel Marketplace also creates POSTGRES_URL, and adds a
+// prefix when one was chosen while connecting the database (STORAGE_DATABASE_URL,
+// NEON_DATABASE_URL...). Pooled URLs are preferred over the "unpooled" ones.
+function findDatabaseUrl() {
+  const isPg = (v) => /^postgres(ql)?:\/\//i.test(String(v || '').trim());
+  for (const name of ['DATABASE_URL', 'POSTGRES_URL']) {
+    if (isPg(env[name])) return { url: env[name].trim(), source: name };
+  }
+  const names = Object.keys(env).filter((k) => /(DATABASE_URL|POSTGRES_URL)$/i.test(k)).sort();
+  const pooledFirst = names.filter((k) => !/UNPOOLED|NON_POOLING/i.test(k)).concat(names.filter((k) => /UNPOOLED|NON_POOLING/i.test(k)));
+  for (const name of pooledFirst) {
+    if (isPg(env[name])) return { url: env[name].trim(), source: name };
+  }
+  return { url: '', source: '' };
+}
+const database = findDatabaseUrl();
+
 module.exports = {
   ROOT,
   PUBLIC_DIR: path.join(ROOT, 'public'),
@@ -34,7 +52,11 @@ module.exports = {
   onVercel,
 
   // Database: PostgreSQL when a connection string is present, otherwise SQLite.
-  databaseUrl: env.DATABASE_URL || env.POSTGRES_URL || '',
+  databaseUrl: database.url,
+  databaseUrlSource: database.source,
+  // Postgres driver: "neon" (HTTP, made for serverless; chosen automatically for
+  // *.neon.tech hosts), "pg" (classic TCP driver for any other PostgreSQL) or "auto".
+  dbDriver: (env.DB_DRIVER || 'auto').toLowerCase(),
   dbPoolMax: Number(env.DB_POOL_MAX) || (onVercel ? 3 : 10),
   dbPath: path.resolve(ROOT, env.DB_PATH || 'storage/hub.db'),
   sqliteJournalMode: env.SQLITE_JOURNAL_MODE || 'WAL',

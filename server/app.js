@@ -17,21 +17,33 @@ const ID_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const PREF_KEYS = new Set(['comment']);
 const catalog = () => U.loadCatalog(config.CATALOG_PATH);
 
+const NO_DATABASE = 'This Vercel deployment has no database yet. In Vercel, open the project, go to Storage, create or connect a Neon (Postgres) database, connect it to this project for Production, Preview and Development, and redeploy. The hub creates its tables on the first visit.';
+
 let db = null;
 let initError = null;
-const ready = (async () => {
+let initAt = 0;
+async function init() {
+  initError = null;
+  initAt = Date.now();
   try {
     catalog(); // fail fast if the catalog has a syntax error
-    if (config.onVercel && !config.databaseUrl) {
-      throw new Error('This deployment has no database. Add a Postgres database (for example Neon from the Vercel Marketplace) so DATABASE_URL is set, then redeploy.');
-    }
+    if (config.onVercel && !config.databaseUrl) throw new Error(NO_DATABASE);
     db = await open(config);
     await ensureAdmin();
   } catch (err) {
+    db = null;
     initError = err;
     console.error('Startup failed:', err.message);
   }
-})();
+}
+let starting = init();
+const ready = starting;
+// On a serverless host a failed start (for example a database that was still
+// waking up) is retried by a later request instead of leaving the instance broken.
+async function ensureReady() {
+  await starting;
+  if (initError && Date.now() - initAt > 5000) { starting = init(); await starting; }
+}
 
 /* ------------------------------------------------------------------ */
 /* HTTP helpers                                                        */
@@ -476,7 +488,7 @@ function commentMeta(m) {
   const pick = (v, allowed, d) => (allowed.has(String(v)) ? String(v) : d);
   return {
     decision: pick(m.decision, COMMENT_DECISIONS, 'unknown'),
-    model: [1, 2, 3, 4, 5].includes(Number(m.model)) ? Number(m.model) : null,
+    model: [1, 2, 3, 4, 5, 6].includes(Number(m.model)) ? Number(m.model) : null,
     language: pick(m.language, new Set(['en', 'es']), 'en'),
     technical: !!m.technical,
     via: pick(m.via, new Set(['rich', 'plain', 'support', 'qagent']), 'rich'),
@@ -554,8 +566,11 @@ route('DELETE', /^\/api\/my-prompts\/([a-z0-9-]+)$/, 'user', async ({ user, m })
 /* Admin */
 route('GET', /^\/api\/admin\/metrics$/, 'admin', async ({ query }) => metrics.compute(db, catalog(), query, TZ));
 
+// Rows per CSV part: about 3 MB on Vercel (4.5 MB response limit), larger on a normal server.
+const EXPORT_PART_ROWS = config.onVercel ? 12000 : 100000;
+route('GET', /^\/api\/admin\/export-info$/, 'admin', async ({ query }) => metrics.exportInfo(db, query, TZ, EXPORT_PART_ROWS));
 route('GET', /^\/api\/admin\/export\.csv$/, 'admin', async ({ res, query }) => {
-  const out = await metrics.exportEvents(db, catalog(), query, TZ);
+  const out = await metrics.exportEvents(db, catalog(), query, TZ, EXPORT_PART_ROWS);
   send(res, 200, out.body, {
     'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store',
     'Content-Disposition': `attachment; filename="${out.filename}"`
@@ -591,17 +606,23 @@ route('POST', /^\/api\/admin\/users\/(\d+)\/reset-password$/, 'admin', async ({ 
   return { ok: true, initialPassword: config.defaultPassword };
 });
 
-route('GET', /^\/(api\/)?healthz$/, null, async () => ({ ok: true, database: db ? db.dialect : null }));
+route('GET', /^\/(api\/)?healthz$/, null, async () => {
+  await db.get('SELECT 1 AS ok');
+  return { ok: true, database: db.dialect, driver: db.driver, connection: config.databaseUrlSource || 'local file', version: (catalog().meta || {}).version };
+});
 
 /* ------------------------------------------------------------------ */
 /* Request handling                                                    */
 /* ------------------------------------------------------------------ */
 async function handle(req, res) {
-  await ready;
+  await ensureReady();
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
   try {
-    if (initError) fail(503, 'setup', initError.message);
+    if (initError) {
+      if (/^\/(api\/)?healthz$/.test(pathname)) return json(res, 503, { ok: false, database: null, error: initError.message, connection: config.databaseUrlSource || (config.onVercel ? 'none' : 'local file') });
+      fail(503, 'setup', initError.message);
+    }
     const r = routes.find((x) => x.method === req.method && x.pattern.test(pathname));
     if (!r) fail(404, 'not_found', 'Unknown API endpoint.');
     const m = pathname.match(r.pattern);
@@ -627,6 +648,7 @@ async function handle(req, res) {
   } catch (err) {
     if (res.headersSent) return;
     if (err instanceof HttpError) return json(res, err.status, Object.assign({ error: err.code, message: err.message }, err.extra || {}));
+    if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500 && typeof err.code === 'string') return json(res, err.status, { error: err.code, message: err.message });
     console.error(err);
     json(res, 500, { error: 'server', message: 'Something went wrong on the server. Try again.' });
   }
